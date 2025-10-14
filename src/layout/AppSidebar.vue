@@ -8,4 +8,9 @@ import AppMenu from './AppMenu.vue';
     </div>
 </template>
 
-<style lang="scss" scoped></style>
+<style lang="scss" scoped>
+.layout-sidebar {
+  width: 300px
+}
+
+</style>

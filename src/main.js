@@ -6,8 +6,11 @@ import Aura from '@primeuix/themes/aura';
 import PrimeVue from 'primevue/config';
 import ConfirmationService from 'primevue/confirmationservice';
 import ToastService from 'primevue/toastservice';
-
+import '@fortawesome/fontawesome-free/css/all.min.css';
 import '@/assets/styles.scss';
+
+import 'primeicons/primeicons.css';
+
 
 const app = createApp(App);
 
