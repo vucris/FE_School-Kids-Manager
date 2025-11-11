@@ -7,115 +7,42 @@ const router = createRouter({
         {
             path: '/',
             component: AppLayout,
+            meta: { requiresAuth: true }, // tất cả route con yêu cầu đăng nhập
             children: [
                 {
-                    path: '/',
+                    path: '', // KHÔNG dùng '/', để tương đối -> kế thừa meta
                     name: 'dashboard',
                     component: () => import('@/views/Dashboard.vue')
                 },
                 {
-                    path: '/school/Trang-Chu',
+                    path: 'school/Trang-Chu', // KHÔNG có '/' đầu
                     name: 'TrangChu',
                     component: () => import('@/views/school/Trang-Chu.vue')
                 },
-                 {
-                    path: '/school/qlNhan-Vien',
-                    name: 'QlNhanVien',
-                    component: () => import('@/views/school/QlNhan-Vien.vue')
+                {
+                    path: 'school/giao-Vien',
+                    name: 'TeacherManagement',
+                    component: () => import('@/views/school/Giao-Vien.vue')
                 },
-                  {
-                    path: '/school/Hoc-Sinh',
+                {
+                    path: 'school/Hoc-Sinh',
                     name: 'QLHocSinh',
                     component: () => import('@/views/school/Hoc-Sinh.vue')
                 },
-                // {
-                //     path: '/uikit/input',
-                //     name: 'input',
-                //     component: () => import('@/views/uikit/InputDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/button',
-                //     name: 'button',
-                //     component: () => import('@/views/uikit/ButtonDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/table',
-                //     name: 'table',
-                //     component: () => import('@/views/uikit/TableDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/list',
-                //     name: 'list',
-                //     component: () => import('@/views/uikit/ListDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/tree',
-                //     name: 'tree',
-                //     component: () => import('@/views/uikit/TreeDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/panel',
-                //     name: 'panel',
-                //     component: () => import('@/views/uikit/PanelsDoc.vue')
-                // },
-
-                // {
-                //     path: '/uikit/overlay',
-                //     name: 'overlay',
-                //     component: () => import('@/views/uikit/OverlayDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/media',
-                //     name: 'media',
-                //     component: () => import('@/views/uikit/MediaDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/message',
-                //     name: 'message',
-                //     component: () => import('@/views/uikit/MessagesDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/file',
-                //     name: 'file',
-                //     component: () => import('@/views/uikit/FileDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/menu',
-                //     name: 'menu',
-                //     component: () => import('@/views/uikit/MenuDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/charts',
-                //     name: 'charts',
-                //     component: () => import('@/views/uikit/ChartDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/misc',
-                //     name: 'misc',
-                //     component: () => import('@/views/uikit/MiscDoc.vue')
-                // },
-                // {
-                //     path: '/uikit/timeline',
-                //     name: 'timeline',
-                //     component: () => import('@/views/uikit/TimelineDoc.vue')
-                // },
-                // {
-                //     path: '/pages/empty',
-                //     name: 'empty',
-                //     component: () => import('@/views/pages/Empty.vue')
-                // },
-                // {
-                //     path: '/pages/crud',
-                //     name: 'crud',
-                //     component: () => import('@/views/pages/Crud.vue')
-                // },
-                // {
-                //     path: '/documentation',
-                //     name: 'documentation',
-                //     component: () => import('@/views/pages/Documentation.vue')
-                // }
+                {
+                    path: 'school/class',
+                    name: 'ClassManagement',
+                    component: () => import('@/views/school/class.vue')
+                },
+                {
+                    path: 'school/parent',
+                    name: 'parentManagement',
+                    component: () => import('@/views/school/phu-Huynh.vue')
+                }
             ]
         },
+
+        // Public routes
         {
             path: '/landing',
             name: 'landing',
@@ -126,11 +53,11 @@ const router = createRouter({
             name: 'notfound',
             component: () => import('@/views/pages/NotFound.vue')
         },
-
         {
             path: '/auth/login',
             name: 'login',
-            component: () => import('@/views/pages/auth/Login.vue')
+            component: () => import('@/views/pages/auth/Login.vue'),
+            meta: { guestOnly: true }
         },
         {
             path: '/auth/access',
@@ -141,7 +68,10 @@ const router = createRouter({
             path: '/auth/error',
             name: 'error',
             component: () => import('@/views/pages/auth/Error.vue')
-        }
+        },
+
+        // Fallback 404
+        { path: '/:pathMatch(.*)*', redirect: { name: 'notfound' } }
     ]
 });
 
