@@ -38,12 +38,12 @@ const model = ref([
     {
         label: 'Hoạt động',
         items: [
-            { label: 'Thực đơn', icon: 'fa-solid fa-clipboard-list', to: '/activity/menu' },
-            { label: 'Điểm danh', icon: 'fa-solid fa-check-circle', to: '/activity/attendance' },
+            { label: 'Thực đơn', icon: 'fa-solid fa-clipboard-list', to: '/school/menu-weekly' },
+            { label: 'Điểm danh', icon: 'fa-solid fa-check-circle', to: '/school/AttendanceBoard' },
             { label: 'Đơn xin nghỉ', icon: 'fa-solid fa-file-lines', to: '/activity/leave-request' },
             { label: 'Đơn xin bảo lưu', icon: 'fa-solid fa-file-medical', to: '/activity/suspend' },
             { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/activity/health' },
-            { label: 'Album', icon: 'fa-solid fa-image', to: '/activity/album' },
+            { label: 'Album', icon: 'fa-solid fa-image', to: '/school/album-manager' },
             { label: 'Bài viết', icon: 'fa-solid fa-pen-to-square', to: '/activity/posts' },
             { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/activity/feedback' }
         ]

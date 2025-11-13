@@ -189,20 +189,73 @@ export async function fetchStudents(params = {}) {
     }
 }
 
-/* Import qua BE */
-export async function importStudentsExcel(file) {
+/* ---------------- Import qua BE: POST /api/v1/students/import (multipart 'file') ---------------- */
+export async function importStudentsExcel(file, { onProgress, signal } = {}) {
     if (!file) throw new Error('Thiếu file import');
+
+    // Tự động chọn endpoint theo baseURL của http
+    // - Nếu http.defaults.baseURL đã có /api/v1 => dùng '/students/import'
+    // - Ngược lại => gọi đầy đủ '/api/v1/students/import'
+    const base = (http?.defaults?.baseURL || '').toLowerCase();
+    const endpoint = base.includes('/api/v1') ? '/students/import' : '/api/v1/students/import';
+
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', file); // phải đúng key 'file' theo BE
+
     try {
-        const res = await http.post('/students/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-        return res?.data?.message || true;
+        const res = await http.post(endpoint, form, {
+            headers: { 'Content-Type': 'multipart/form-data', Accept: 'application/json' },
+            onUploadProgress: (e) => {
+                if (typeof onProgress === 'function' && e?.total) {
+                    onProgress(Math.round((e.loaded * 100) / e.total));
+                }
+            },
+            signal
+        });
+        // BE trả ApiResponse<String> { status, message, data }
+        return res?.data?.message || 'Import hoàn tất';
     } catch (err) {
         throw new Error(extractErrorMessage(err, 'Import Excel thất bại'));
     }
 }
 
-/* Tải template từ BE */
+/* ---------------- Tải template import đúng thứ tự cột BE đang đọc ---------------- */
+export async function downloadStudentsImportTemplate() {
+    const header = ['username', 'password', 'fullName', 'email', 'phone', 'gender', 'dateOfBirth', 'address', 'healthNotes', 'classId', 'parentId'];
+
+    const sample = [
+        [
+            'hs001',
+            '123456',
+            'Nguyễn Văn A',
+            'hs001@example.com',
+            '0909123456',
+            'M', // M | F | Nam | Nữ
+            '2019-05-02', // hoặc dd/MM/yyyy
+            '123 Lê Lợi, Q1',
+            'Dị ứng sữa',
+            1, // classId tồn tại
+            10 // parentId tồn tại
+        ]
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([header, ...sample]);
+    XLSX.utils.book_append_sheet(wb, ws, 'ImportStudents');
+
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'students_import_template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+/* Tải template từ BE (nếu backend có sẵn endpoint) */
 export async function downloadStudentsTemplate() {
     try {
         const res = await http.get('/students/template', { responseType: 'blob' });
@@ -258,37 +311,86 @@ function csv(v) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/* ---------------- DELETE: SweetAlert-friendly (timeout + bulk song song) ---------------- */
-export async function deleteStudent(id, { timeoutMs = 12000 } = {}) {
-    if (!id) throw new Error('Thiếu id học sinh');
+/* ---------------- DELETE: thử nhiều endpoint + timeout + thông điệp lỗi rõ ràng ---------------- */
+async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {}) {
     try {
-        await http.delete(`/students/delete/${id}`, {
-            timeout: timeoutMs, // axios timeout
+        const res = await http.delete(url, {
+            timeout: timeoutMs,
+            withCredentials,
             validateStatus: (s) => (s >= 200 && s < 300) || s === 204
         });
-        return true;
+        return { ok: true, status: res?.status ?? 200 };
     } catch (err) {
-        const msg =
+        const status = err?.response?.status;
+        const bodyMsg = err?.response?.data?.message || err?.response?.data?.error || err?.response?.data?.detail || err?.message;
+        const isTimeout =
             err?.code === 'ECONNABORTED' ||
             String(err?.message || '')
                 .toLowerCase()
-                .includes('timeout')
-                ? 'Hết thời gian chờ (timeout) khi xóa'
-                : err?.response?.data?.message || err?.message || 'Xóa học sinh thất bại';
-        throw new Error(msg);
+                .includes('timeout');
+        const message = isTimeout ? 'TIMEOUT' : bodyMsg || 'Request failed';
+        return { ok: false, status, message };
     }
 }
 
-// Xóa nhiều học sinh: chạy song song và trả thống kê
+export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = false } = {}) {
+    if (!id) throw new Error('Thiếu id học sinh');
+
+    // Danh sách endpoint thường gặp (sẽ thử lần lượt)
+    const candidates = [
+        `/students/delete/${id}`, // bạn đang dùng
+        `/students/${id}` // nhiều backend dùng RESTful thuần
+        // Nếu backend bạn có soft-delete riêng có thể thêm:
+        // { url: `/students/${id}/delete`, method: 'post' }
+    ];
+
+    let lastErr;
+    for (const url of candidates) {
+        const r = await tryDelete(url, { timeoutMs, withCredentials });
+        if (r.ok) return true;
+
+        // Nếu 404/405 có thể do sai path/method -> thử candidate tiếp theo
+        if (r.status === 404 || r.status === 405 || r.status === 400) {
+            lastErr = new Error(`Xóa thất bại (${r.status}) tại ${url}`);
+            continue;
+        }
+
+        // Các lỗi khác (403/401/500/timeout...) dừng luôn để báo đúng
+        const msg = r.message === 'TIMEOUT' ? `Hết thời gian chờ (timeout) khi xóa (URL: ${url})` : `Xóa học sinh thất bại (${r.status || 'n/a'}) tại ${url}: ${r.message}`;
+        throw new Error(msg);
+    }
+
+    // Nếu chạy hết candidates mà vẫn không OK
+    throw lastErr || new Error('Xóa học sinh thất bại (không có endpoint phù hợp)');
+}
+
+/* ---------------- Xóa nhiều: giới hạn song song để ổn định ---------------- */
 export async function deleteStudents(ids = [], opts = {}) {
     if (!Array.isArray(ids) || !ids.length) return { ok: 0, fail: 0, errors: [] };
-    const results = await Promise.allSettled(ids.map((id) => deleteStudent(id, opts)));
-    const summary = { ok: 0, fail: 0, errors: [] };
-    results.forEach((r, i) => {
-        if (r.status === 'fulfilled') summary.ok += 1;
-        else (summary.fail += 1), summary.errors.push({ id: ids[i], message: r.reason?.message || 'Xóa thất bại' });
-    });
-    return summary;
+
+    const concurrency = Number(opts.concurrency ?? 4);
+    let i = 0;
+    let ok = 0;
+    let fail = 0;
+    const errors = [];
+
+    async function worker() {
+        while (i < ids.length) {
+            const idx = i++;
+            const id = ids[idx];
+            try {
+                await deleteStudent(id, opts);
+                ok++;
+            } catch (e) {
+                fail++;
+                errors.push({ id, message: e?.message || 'Xóa thất bại' });
+            }
+        }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
+    await Promise.all(workers);
+    return { ok, fail, errors };
 }
 
 /* ---------------- FE xử lý import Excel -> gọi nhiều POST /students ---------------- */

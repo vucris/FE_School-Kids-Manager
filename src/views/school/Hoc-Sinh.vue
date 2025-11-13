@@ -439,7 +439,7 @@ onMounted(load);
                     </template>
                     <template #body="{ data }">
                         <div class="text-slate-900">{{ data.parentName || '-' }}</div>
-                        <div class="text-slate-500 text-sm"><i class="fa-solid fa-phone"></i> {{ data.parentPhone || '-' }}</div>
+                        <div class="text-slate-500 text-sm"><i class="fa-solid fa-phone"></i> {{ data.phone || '-' }}</div>
                     </template>
                 </Column>
 

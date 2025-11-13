@@ -7,3 +7,4 @@ export function setAuthStore(store) {
 export function getAuthStore() {
   return authStoreRef;
 }
+

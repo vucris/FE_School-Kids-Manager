@@ -38,7 +38,22 @@ const router = createRouter({
                     path: 'school/parent',
                     name: 'parentManagement',
                     component: () => import('@/views/school/phu-Huynh.vue')
-                }
+                },
+                {
+                    path: 'school/menu-weekly',
+                    name: 'menuManagement',
+                    component: () => import('@/views/school/MenuWeekly.vue')
+                },
+                {
+                    path: 'school/AttendanceBoard',
+                    name: 'AttendanceBoard',
+                    component: () => import('@/views/school/AttendanceBoard.vue')
+                },
+                {
+                    path: 'school/album-manager',
+                    name: 'AlbumManager',
+                    component: () => import('@/views/school/AlbumManager.vue')
+                },
             ]
         },
 
