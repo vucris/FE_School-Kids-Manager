@@ -6,7 +6,6 @@ import { importStudentsExcel, downloadStudentsImportTemplate } from '@/service/s
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
-    // Nếu BE có endpoint template riêng, có thể thay bằng gọi thẳng BE; hiện tại dùng FE generator
     hasTemplate: { type: Boolean, default: true }
 });
 const emit = defineEmits(['update:modelValue', 'imported']);
@@ -31,6 +30,7 @@ function reset() {
     infoMsg.value = '';
     dragging.value = false;
 }
+
 watch(
     () => visible.value,
     (v) => {
@@ -89,11 +89,17 @@ async function onUpload() {
     infoMsg.value = '';
 
     try {
-        const msg = await importStudentsExcel(file.value, {
+        const res = await importStudentsExcel(file.value, {
             onProgress: (p) => (progress.value = p)
         });
-        infoMsg.value = msg || 'Nhập dữ liệu thành công';
-        emit('imported');
+
+        // res có thể là string hoặc ApiResponse; lấy message thân thiện
+        const msg = typeof res === 'string' ? res : res?.message || 'Nhập học sinh thành công';
+
+        infoMsg.value = msg;
+        emit('imported'); // chỉ báo cho màn ngoài reload, không gửi số lượng
+
+        // Đóng popup sau một chút
         setTimeout(() => {
             visible.value = false;
         }, 800);
@@ -122,19 +128,14 @@ async function onUpload() {
                 <div v-if="file" class="file-tag">
                     <i class="fa-regular fa-file-excel mr-2 text-emerald-600"></i>
                     <span class="font-medium">{{ file.name }}</span>
-                    <span class="ml-2 text-slate-500 text-sm">({{ (file.size / 1024 / 1024).toFixed(2) }} MB)</span>
+                    <span class="ml-2 text-slate-500 text-sm"> ({{ (file.size / 1024 / 1024).toFixed(2) }} MB) </span>
                 </div>
             </div>
         </div>
 
         <div class="mt-3 text-sm text-slate-700">
             Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):
-            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">username, password, fullName, email, phone, gender, dateOfBirth, address, healthNotes, classId, parentId</div>
-            <ul class="list-disc pl-5 mt-2 space-y-1 text-slate-600">
-                <li>gender: M | F | Nam | Nữ</li>
-                <li>dateOfBirth: yyyy-MM-dd hoặc dd/MM/yyyy</li>
-                <li>classId, parentId: số nguyên ID hợp lệ tồn tại trong hệ thống</li>
-            </ul>
+            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">username, password, fullName, email, phone, gender, dateOfBirth, address, healthNotes, class_code, phone (phụ huynh)</div>
         </div>
 
         <div v-if="uploading" class="mt-3 text-sm text-slate-600">
@@ -144,8 +145,12 @@ async function onUpload() {
             </div>
         </div>
 
-        <div v-if="errorMsg" class="mt-3 text-sm text-rose-600 font-medium">{{ errorMsg }}</div>
-        <div v-if="infoMsg" class="mt-3 text-sm text-emerald-600 font-medium">{{ infoMsg }}</div>
+        <div v-if="errorMsg" class="mt-3 text-sm text-rose-600 font-medium">
+            {{ errorMsg }}
+        </div>
+        <div v-if="infoMsg" class="mt-3 text-sm text-emerald-600 font-medium">
+            {{ infoMsg }}
+        </div>
 
         <template #footer>
             <div class="flex items-center justify-between w-full">
@@ -160,6 +165,7 @@ async function onUpload() {
 </template>
 
 <style scoped>
+/* giữ nguyên style như bạn đang có */
 .dropzone {
     border: 2px dashed #cbd5e1;
     border-radius: 12px;

@@ -54,6 +54,16 @@ const router = createRouter({
                     name: 'AlbumManager',
                     component: () => import('@/views/school/AlbumManager.vue')
                 },
+                {
+                    path: 'school/new-list',
+                    name: 'newsList',
+                    component: () => import('@/views/school/NewList.vue')
+                },
+                {
+                    path: 'school/feedback-inbox',
+                    name: 'feedbackInbox',
+                    component: () => import('@/views/school/FeedbackInbox.vue')
+                },
             ]
         },
 

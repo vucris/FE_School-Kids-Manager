@@ -198,6 +198,7 @@ async function openDetail(album) {
     }
 }
 
+/* Duyệt / từ chối trong dialog chi tiết */
 async function onApprove(status) {
     if (!activeAlbum.value) return;
     try {
@@ -206,7 +207,35 @@ async function onApprove(status) {
             status // 'APPROVED' | 'REJECTED'
         });
         activeAlbum.value = updated;
-        swalToast.fire({ icon: 'success', title: status === 'APPROVED' ? 'Đã duyệt album' : 'Đã từ chối album' });
+        swalToast.fire({
+            icon: 'success',
+            title: status === 'APPROVED' ? 'Đã duyệt album' : 'Đã từ chối album'
+        });
+        await loadAlbums();
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Cập nhật phê duyệt thất bại' });
+    }
+}
+
+/* Duyệt / từ chối trực tiếp ngoài card */
+async function approveAlbumFromCard(album, status) {
+    if (!album?.id) return;
+    try {
+        await approveAlbum(album.id, {
+            approvedBy: currentUser.value,
+            status
+        });
+        swalToast.fire({
+            icon: 'success',
+            title: status === 'APPROVED' ? 'Đã duyệt album' : 'Đã từ chối album'
+        });
+
+        // Nếu dialog đang mở cùng album, đồng bộ trạng thái
+        if (activeAlbum.value && activeAlbum.value.id === album.id) {
+            activeAlbum.value.status = status;
+            activeAlbum.value.approvedBy = currentUser.value;
+        }
+
         await loadAlbums();
     } catch (e) {
         swalToast.fire({ icon: 'error', title: e?.message || 'Cập nhật phê duyệt thất bại' });
@@ -382,30 +411,8 @@ onMounted(async () => {
                     <div class="flex flex-wrap items-center justify-between gap-2">
                         <div class="flex items-center gap-2">
                             <Button class="btn-outline" icon="fa-regular fa-images mr-2" label="Xem ảnh" @click="openDetail(a)" />
-                            <Button
-                                v-if="a.status === 'PENDING'"
-                                class="btn-success"
-                                icon="fa-solid fa-check mr-2"
-                                label="Duyệt"
-                                @click="
-                                    async () => {
-                                        activeAlbum.value = a;
-                                        await onApprove('APPROVED');
-                                    }
-                                "
-                            />
-                            <Button
-                                v-if="a.status === 'PENDING'"
-                                class="btn-danger"
-                                icon="fa-solid fa-xmark mr-2"
-                                label="Từ chối"
-                                @click="
-                                    async () => {
-                                        activeAlbum.value = a;
-                                        await onApprove('REJECTED');
-                                    }
-                                "
-                            />
+                            <Button v-if="a.status === 'PENDING'" class="btn-success" icon="fa-solid fa-check mr-2" label="Duyệt" @click="approveAlbumFromCard(a, 'APPROVED')" />
+                            <Button v-if="a.status === 'PENDING'" class="btn-danger" icon="fa-solid fa-xmark mr-2" label="Từ chối" @click="approveAlbumFromCard(a, 'REJECTED')" />
                         </div>
                         <Button class="btn-ghost" icon="fa-solid fa-trash" @click="onDeleteAlbum(a)" />
                     </div>
@@ -482,14 +489,17 @@ onMounted(async () => {
                             </button>
                         </div>
                         <div class="text-sm mt-1 font-medium line-clamp-1">{{ p.caption || '—' }}</div>
-                        <div class="text-xs text-slate-500">{{ p.uploadedAt ? new Date(p.uploadedAt).toLocaleString('vi-VN') : '' }}</div>
+                        <div class="text-xs text-slate-500">
+                            {{ p.uploadedAt ? new Date(p.uploadedAt).toLocaleString('vi-VN') : '' }}
+                        </div>
                     </div>
                 </div>
 
                 <!-- Approver info (hiển thị rõ người duyệt) -->
                 <div class="text-xs text-slate-500" v-if="activeAlbum?.approvedBy || activeAlbum?.approvedAt">
-                    <i class="fa-regular fa-circle-check mr-1"></i>Duyệt bởi: <b>{{ activeAlbum?.approvedBy || '—' }}</b>
-                    <span v-if="activeAlbum?.approvedAt"> • {{ new Date(activeAlbum.approvedAt).toLocaleString('vi-VN') }}</span>
+                    <i class="fa-regular fa-circle-check mr-1"></i>Duyệt bởi:
+                    <b>{{ activeAlbum?.approvedBy || '—' }}</b>
+                    <span v-if="activeAlbum?.approvedAt"> • {{ new Date(activeAlbum.approvedAt).toLocaleString('vi-VN') }} </span>
                 </div>
             </div>
 

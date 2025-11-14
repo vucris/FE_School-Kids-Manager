@@ -1,7 +1,12 @@
 import http from '@/service/http.js';
 import * as XLSX from 'xlsx'; // npm i xlsx
 
-/* ---------------- Helpers chuyển đổi ---------------- */
+/* ---------------- Helpers chung ---------------- */
+function withApiV1(path) {
+    const base = (http?.defaults?.baseURL || '').toLowerCase();
+    return base.includes('/api/v1') ? path : `/api/v1${path}`;
+}
+
 function toGenderChar(g) {
     if (!g) return 'M';
     const s = String(g).toUpperCase();
@@ -44,7 +49,8 @@ const parentCache = {
 async function loadParentsAllToCache() {
     if (parentCache.loaded) return parentCache.map;
     try {
-        const res = await http.get('/parents/all'); // baseURL should be /api/v1
+        const url = withApiV1('/parents/all');
+        const res = await http.get(url);
         const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
         for (const p of raw) {
             const id = p.id ?? p.parentId;
@@ -92,7 +98,6 @@ async function enrichStudentsWithParents(items) {
 
 /* ---------------- Map từ BE -> model bảng ---------------- */
 function mapStudentRow(s) {
-    // className và parent lấy linh hoạt nhiều field
     const className = s.className || s.clazz?.className || s.class?.className || '';
     const parentId = s.parentId ?? s.parent_id ?? s.parent?.id ?? null;
     const parentName = s.parentName || s.parent?.fullName || s.parent?.name || '';
@@ -119,10 +124,11 @@ function mapStudentRow(s) {
     };
 }
 
+/* ---------------- API create đơn lẻ (POST /students/create) ---------------- */
 export async function createStudent(payload) {
     try {
-        // theo yêu cầu của bạn: /students/create
-        const res = await http.post('/students/create', payload);
+        const url = withApiV1('/students/create');
+        const res = await http.post(url, payload);
         return res?.data?.data || res?.data;
     } catch (err) {
         throw new Error(err?.response?.data?.message || err?.message || 'Tạo học sinh thất bại');
@@ -176,10 +182,11 @@ function applyFiltersSortPaginate(list, params = {}) {
     return { items, total };
 }
 
-/* ---------------- API hiện có (FE-side filter) ---------------- */
+/* ---------------- GET /students/all (FE-side filter) ---------------- */
 export async function fetchStudents(params = {}) {
     try {
-        const res = await http.get('/students/all');
+        const url = withApiV1('/students/all');
+        const res = await http.get(url);
         const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
         let mapped = raw.map(mapStudentRow);
         mapped = await enrichStudentsWithParents(mapped);
@@ -193,14 +200,9 @@ export async function fetchStudents(params = {}) {
 export async function importStudentsExcel(file, { onProgress, signal } = {}) {
     if (!file) throw new Error('Thiếu file import');
 
-    // Tự động chọn endpoint theo baseURL của http
-    // - Nếu http.defaults.baseURL đã có /api/v1 => dùng '/students/import'
-    // - Ngược lại => gọi đầy đủ '/api/v1/students/import'
-    const base = (http?.defaults?.baseURL || '').toLowerCase();
-    const endpoint = base.includes('/api/v1') ? '/students/import' : '/api/v1/students/import';
-
+    const endpoint = withApiV1('/students/import');
     const form = new FormData();
-    form.append('file', file); // phải đúng key 'file' theo BE
+    form.append('file', file); // key 'file' đúng với @RequestParam("file")
 
     try {
         const res = await http.post(endpoint, form, {
@@ -212,30 +214,41 @@ export async function importStudentsExcel(file, { onProgress, signal } = {}) {
             },
             signal
         });
-        // BE trả ApiResponse<String> { status, message, data }
         return res?.data?.message || 'Import hoàn tất';
     } catch (err) {
         throw new Error(extractErrorMessage(err, 'Import Excel thất bại'));
     }
 }
 
-/* ---------------- Tải template import đúng thứ tự cột BE đang đọc ---------------- */
+/* ---------------- Tải template import trùng với file Excel của BE ---------------- */
 export async function downloadStudentsImportTemplate() {
-    const header = ['username', 'password', 'fullName', 'email', 'phone', 'gender', 'dateOfBirth', 'address', 'healthNotes', 'classId', 'parentId'];
+    const header = [
+        'username',
+        'password',
+        'fullName',
+        'email',
+        'phone',       // SĐT học sinh
+        'gender',
+        'dateOfBirth',
+        'address',
+        'healthNotes',
+        'class_code',  // mã lớp
+        'phone'        // SĐT phụ huynh
+    ];
 
     const sample = [
         [
-            'hs001',
+            'nguyenanh1',
             '123456',
-            'Nguyễn Văn A',
-            'hs001@example.com',
-            '0909123456',
-            'M', // M | F | Nam | Nữ
-            '2019-05-02', // hoặc dd/MM/yyyy
-            '123 Lê Lợi, Q1',
-            'Dị ứng sữa',
-            1, // classId tồn tại
-            10 // parentId tồn tại
+            'Nguyễn Anh',
+            'nguyenanh@gmail.com',
+            '909123193',
+            'Nam',
+            '2017-09-01',
+            '123 Lê Lợi, Q1, TP.HCM',
+            'Bình thường',
+            'MG5A',
+            '0987654321'
         ]
     ];
 
@@ -244,7 +257,9 @@ export async function downloadStudentsImportTemplate() {
     XLSX.utils.book_append_sheet(wb, ws, 'ImportStudents');
 
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const blob = new Blob([wbout], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -255,44 +270,49 @@ export async function downloadStudentsImportTemplate() {
     URL.revokeObjectURL(url);
 }
 
-/* Tải template từ BE (nếu backend có sẵn endpoint) */
+/* ---------------- Tải template từ BE (nếu có) ---------------- */
 export async function downloadStudentsTemplate() {
     try {
-        const res = await http.get('/students/template', { responseType: 'blob' });
+        const url = withApiV1('/students/template');
+        const res = await http.get(url, { responseType: 'blob' });
         const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
+        const dlUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const cd = res.headers['content-disposition'] || '';
         const m = cd.match(/filename="?([^"]+)"?/i);
-        a.href = url;
+        a.href = dlUrl;
         a.download = m ? m[1] : 'students_template.xlsx';
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
+        URL.revokeObjectURL(dlUrl);
     } catch (err) {
         throw new Error(extractErrorMessage(err, 'Tải mẫu thất bại'));
     }
 }
 
-/* Xuất file; fallback CSV có BOM */
+/* ---------------- Export danh sách học sinh ---------------- */
 export async function exportStudentsExcel() {
     try {
-        const res = await http.get('/students/export', { responseType: 'blob' });
+        const url = withApiV1('/students/export');
+        const res = await http.get(url, { responseType: 'blob' });
         const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
+        const dlUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const cd = res.headers['content-disposition'] || '';
-        theDownload(a, url, (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx');
+        const name = (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx';
+        theDownload(a, dlUrl, name);
     } catch (err) {
         const { items } = await fetchStudents({ page: 1, size: 10000 });
         const header = 'code,name,className,parentName\n';
-        const rows = items.map((r) => `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`).join('\n');
+        const rows = items
+            .map((r) => `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`)
+            .join('\n');
         const BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
         const blob = new Blob([BOM, header + rows], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        theDownload(a, url, 'students.csv');
+        const dlUrl = URL.createObjectURL(blob);
+        theDownload(a, dlUrl, 'students.csv');
     }
 }
 function theDownload(a, url, name) {
@@ -311,10 +331,10 @@ function csv(v) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/* ---------------- DELETE: thử nhiều endpoint + timeout + thông điệp lỗi rõ ràng ---------------- */
+/* ---------------- DELETE (thử nhiều endpoint) ---------------- */
 async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {}) {
     try {
-        const res = await http.delete(url, {
+        const res = await http.delete(withApiV1(url), {
             timeout: timeoutMs,
             withCredentials,
             validateStatus: (s) => (s >= 200 && s < 300) || s === 204
@@ -322,7 +342,11 @@ async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {
         return { ok: true, status: res?.status ?? 200 };
     } catch (err) {
         const status = err?.response?.status;
-        const bodyMsg = err?.response?.data?.message || err?.response?.data?.error || err?.response?.data?.detail || err?.message;
+        const bodyMsg =
+            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            err?.response?.data?.detail ||
+            err?.message;
         const isTimeout =
             err?.code === 'ECONNABORTED' ||
             String(err?.message || '')
@@ -336,35 +360,32 @@ async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {
 export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = false } = {}) {
     if (!id) throw new Error('Thiếu id học sinh');
 
-    // Danh sách endpoint thường gặp (sẽ thử lần lượt)
     const candidates = [
-        `/students/delete/${id}`, // bạn đang dùng
-        `/students/${id}` // nhiều backend dùng RESTful thuần
-        // Nếu backend bạn có soft-delete riêng có thể thêm:
-        // { url: `/students/${id}/delete`, method: 'post' }
+        `/students/delete/${id}`, // backend hiện tại
+        `/students/${id}` // RESTful thuần nếu sau này đổi
     ];
 
     let lastErr;
-    for (const url of candidates) {
-        const r = await tryDelete(url, { timeoutMs, withCredentials });
+    for (const path of candidates) {
+        const r = await tryDelete(path, { timeoutMs, withCredentials });
         if (r.ok) return true;
 
-        // Nếu 404/405 có thể do sai path/method -> thử candidate tiếp theo
         if (r.status === 404 || r.status === 405 || r.status === 400) {
-            lastErr = new Error(`Xóa thất bại (${r.status}) tại ${url}`);
+            lastErr = new Error(`Xóa thất bại (${r.status}) tại ${path}`);
             continue;
         }
 
-        // Các lỗi khác (403/401/500/timeout...) dừng luôn để báo đúng
-        const msg = r.message === 'TIMEOUT' ? `Hết thời gian chờ (timeout) khi xóa (URL: ${url})` : `Xóa học sinh thất bại (${r.status || 'n/a'}) tại ${url}: ${r.message}`;
+        const msg =
+            r.message === 'TIMEOUT'
+                ? `Hết thời gian chờ (timeout) khi xóa (URL: ${path})`
+                : `Xóa học sinh thất bại (${r.status || 'n/a'}) tại ${path}: ${r.message}`;
         throw new Error(msg);
     }
 
-    // Nếu chạy hết candidates mà vẫn không OK
     throw lastErr || new Error('Xóa học sinh thất bại (không có endpoint phù hợp)');
 }
 
-/* ---------------- Xóa nhiều: giới hạn song song để ổn định ---------------- */
+/* ---------------- Xóa nhiều ---------------- */
 export async function deleteStudents(ids = [], opts = {}) {
     if (!Array.isArray(ids) || !ids.length) return { ok: 0, fail: 0, errors: [] };
 
@@ -393,7 +414,38 @@ export async function deleteStudents(ids = [], opts = {}) {
     return { ok, fail, errors };
 }
 
-/* ---------------- FE xử lý import Excel -> gọi nhiều POST /students ---------------- */
+/* ---------------- Đổi lớp cho 1 học sinh ---------------- */
+export async function changeStudentClass(studentId, newClassId) {
+    if (!studentId || !newClassId) {
+        throw new Error('Thiếu học sinh hoặc lớp cần chuyển');
+    }
+
+    const url = withApiV1(`/students/${studentId}/class`);
+
+    try {
+        const res = await http.put(
+            url,
+            { classId: newClassId },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json'
+                }
+            }
+        );
+        // ApiResponse<StudentResponse> { status, message, data }
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Chuyển lớp thất bại'
+        );
+    }
+}
+
+/* ---------------- bulkImportStudentsFromFile (FE tự đọc Excel) ---------------- */
 export async function bulkImportStudentsFromFile(file, options = {}) {
     const {
         requiredHeaders = ['studentCode', 'fullName', 'dateOfBirth', 'gender', 'className', 'parentName', 'parentPhone', 'parentEmail', 'address'],
@@ -406,7 +458,6 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
     if (!file) throw new Error('Thiếu file');
 
-    // 1) Đọc Excel
     let workbook;
     try {
         const buf = await file.arrayBuffer();
@@ -421,12 +472,10 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
     if (!json.length) throw new Error('File rỗng');
 
-    // 2) Kiểm tra header
     const headers = Object.keys(json[0]).map((h) => h.trim());
     const missing = requiredHeaders.filter((h) => !headers.includes(h));
     if (missing.length) throw new Error('Thiếu cột: ' + missing.join(', '));
 
-    // 3) Lấy danh sách hiện có để chống trùng
     let existing = [];
     try {
         const all = await fetchStudents({ status: 'all', page: 1, size: 99999 });
@@ -438,7 +487,6 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     const parentPhoneSet = new Set(existing.map((s) => s.parentPhone).filter(Boolean));
     const emailSet = new Set(existing.map((s) => s.email).filter(Boolean));
 
-    // 4) Validate & build payload
     const rows = json.slice(0, maxPreview).map((r, i) => {
         const rowErrors = [];
 
@@ -474,7 +522,6 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         const address = (r.address || '').trim();
 
-        // Trùng so với DB hiện có
         if (studentCode && codeSet.has(studentCode)) rowErrors.push('studentCode trùng');
         if (parentPhone && parentPhoneSet.has(parentPhone)) rowErrors.push('parentPhone trùng');
         if (parentEmail && emailSet.has(parentEmail)) rowErrors.push('parentEmail trùng');
@@ -500,7 +547,6 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     const validRows = rows.filter((r) => r.errors.length === 0);
     const invalidRows = rows.filter((r) => r.errors.length > 0);
 
-    // 5) Chunk POST /students
     const report = {
         total: rows.length,
         valid: validRows.length,
@@ -521,7 +567,8 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     async function runChunk(chunk) {
         const promises = chunk.map(async (r) => {
             try {
-                await http.post('/students', r.payload);
+                const url = withApiV1('/students');
+                await http.post(url, r.payload);
                 if (r.payload.studentCode) codeSet.add(r.payload.studentCode);
                 if (r.payload.parentPhone) parentPhoneSet.add(r.payload.parentPhone);
                 if (r.payload.parentEmail) emailSet.add(r.payload.parentEmail);
@@ -541,7 +588,6 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
         await Promise.all(promises);
     }
 
-    // Scheduler giới hạn số chunk chạy song song
     let active = 0;
     let idx = 0;
     await new Promise((resolve) => {

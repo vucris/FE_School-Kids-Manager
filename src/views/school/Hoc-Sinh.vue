@@ -17,6 +17,7 @@ import Swal from 'sweetalert2';
 import { fetchStudents, exportStudentsExcel, deleteStudent, deleteStudents } from '@/service/studentService.js';
 import ImportStudentsModal from '@/components/staff/ImportStudentsModal.vue';
 import CreateStudentModal from '@/components/staff/CreateStudentModal.vue';
+import ChangeStudentClassModal from '@/components/staff/ChangeStudentClassModal.vue'; // ✅ thêm modal chuyển lớp
 
 const router = useRouter();
 
@@ -137,9 +138,29 @@ function confirmDelete(title, text) {
 /* disable actions while deleting to avoid duplicate clicks */
 const isDeleting = ref(false);
 
-/* Row menu */
+/* Row menu + chuyển lớp 1 học sinh */
 const rowMenu = ref();
 const activeRow = ref(null);
+
+const showChangeClass = ref(false); // ✅ state mở modal chuyển lớp
+const studentForChange = ref(null); // ✅ học sinh đang được chọn để chuyển lớp
+
+function openRowMenu(e, row) {
+    activeRow.value = row;
+    rowMenu.value.toggle(e);
+}
+
+function openChangeClass(row) {
+    studentForChange.value = row;
+    showChangeClass.value = true;
+}
+
+async function onClassChanged() {
+    // sau khi chuyển lớp thành công, reload lại danh sách
+    await load();
+}
+
+/* Row menu items */
 const rowMenuItems = ref([
     {
         label: 'Xem hồ sơ',
@@ -151,8 +172,18 @@ const rowMenuItems = ref([
             if (activeRow.value?.id) router.push({ name: 'StudentDetail', params: { id: activeRow.value.id } });
         }
     },
-    { label: 'Chuyển lớp', icon: 'fa-solid fa-right-left', tone: 'warn', sub: 'Đổi lớp hiện tại', command: () => {} },
-    { label: 'Chuyển trường', icon: 'fa-solid fa-school-flag', tone: 'info', sub: 'Chuyển sang cơ sở khác', command: () => {} },
+    {
+        label: 'Chuyển lớp',
+        icon: 'fa-solid fa-right-left',
+        tone: 'warn',
+        sub: 'Đổi lớp hiện tại',
+        command: () => {
+            if (activeRow.value) {
+                openChangeClass(activeRow.value); // ✅ mở modal chuyển lớp
+            }
+        }
+    },
+
     { separator: true },
     { label: 'Thôi học', icon: 'fa-solid fa-user-minus', tone: 'warn', sub: 'Tạm dừng/hủy học', command: () => {} },
     { label: 'Bảo lưu', icon: 'fa-solid fa-tent-arrow-left-right', tone: 'info', sub: 'Giữ chỗ cho kỳ sau', command: () => {} },
@@ -164,10 +195,6 @@ const rowMenuItems = ref([
         command: () => onDeleteRow(activeRow.value)
     }
 ]);
-function openRowMenu(e, row) {
-    activeRow.value = row;
-    rowMenu.value.toggle(e);
-}
 
 /* Helpers */
 function genderIcon(g) {
@@ -258,14 +285,13 @@ async function onStudentCreated() {
     await load();
 }
 
-/* Xóa 1 học sinh: dùng quick loading toast (không chặn UI) và auto close */
+/* Xóa 1 học sinh */
 async function onDeleteRow(row) {
     if (isDeleting.value || !row?.id) return;
     const { isConfirmed } = await confirmDelete('Xóa học sinh?', `Bạn có chắc muốn xóa "${row.name}"? Thao tác không thể hoàn tác.`);
     if (!isConfirmed) return;
 
     isDeleting.value = true;
-    // hiển thị 1 toast loader ngắn, tự tắt
     quickLoadingToast('Đang xóa...', 900);
 
     try {
@@ -279,7 +305,7 @@ async function onDeleteRow(row) {
     }
 }
 
-/* Xóa nhiều: cũng dùng quick loader; kết quả báo bằng toast */
+/* Xóa nhiều */
 async function onBulkDelete() {
     if (isDeleting.value) return;
     const ids = selection.value.map((s) => s.id);
@@ -361,7 +387,6 @@ onMounted(load);
         <!-- Bulk actions -->
         <div class="flex flex-wrap items-center gap-2">
             <Button class="!bg-amber-500 !border-0 !text-white" icon="fa-solid fa-right-left mr-2" label="Chuyển lớp" @click="onBulk('class')" />
-            <Button class="!bg-sky-500 !border-0 !text-white" icon="fa-solid fa-school-flag mr-2" label="Chuyển trường" @click="onBulk('school')" />
             <Button class="!bg-rose-500 !border-0 !text-white" icon="fa-solid fa-user-minus mr-2" label="Thôi học" @click="onBulk('drop')" />
             <Button class="!bg-orange-500 !border-0 !text-white" icon="fa-solid fa-tent-arrow-left-right mr-2" label="Bảo lưu" @click="onBulk('reserve')" />
             <Button class="!bg-red-600 !border-0 !text-white" :class="{ 'opacity-60 pointer-events-none': isDeleting }" :disabled="isDeleting" icon="fa-regular fa-trash-can mr-2" label="Xóa học sinh" @click="onBulk('delete')" />
@@ -456,10 +481,11 @@ onMounted(load);
             </div>
         </div>
 
-        <!-- Row menu -->
+        <!-- Row menu + modals -->
         <Menu ref="rowMenu" :model="rowMenuItems" :popup="true" appendTo="body" />
         <ImportStudentsModal v-model:modelValue="showImport" @imported="onImported" :useServerTemplate="true" />
         <CreateStudentModal v-model:modelValue="showCreate" @created="onStudentCreated" />
+        <ChangeStudentClassModal v-model:modelValue="showChangeClass" :student="studentForChange" @changed="onClassChanged" />
     </div>
 </template>
 

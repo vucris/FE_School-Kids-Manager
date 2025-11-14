@@ -44,8 +44,8 @@ const model = ref([
             { label: 'Đơn xin bảo lưu', icon: 'fa-solid fa-file-medical', to: '/activity/suspend' },
             { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/activity/health' },
             { label: 'Album', icon: 'fa-solid fa-image', to: '/school/album-manager' },
-            { label: 'Bài viết', icon: 'fa-solid fa-pen-to-square', to: '/activity/posts' },
-            { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/activity/feedback' }
+            { label: 'Bài viết', icon: 'fa-solid fa-pen-to-square', to: '/school/new-list' },
+            { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/school/feedback-inbox' }
         ]
     },
 
