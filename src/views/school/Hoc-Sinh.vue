@@ -17,7 +17,8 @@ import Swal from 'sweetalert2';
 import { fetchStudents, exportStudentsExcel, deleteStudent, deleteStudents } from '@/service/studentService.js';
 import ImportStudentsModal from '@/components/staff/ImportStudentsModal.vue';
 import CreateStudentModal from '@/components/staff/CreateStudentModal.vue';
-import ChangeStudentClassModal from '@/components/staff/ChangeStudentClassModal.vue'; // ✅ thêm modal chuyển lớp
+import ChangeStudentClassModal from '@/components/staff/ChangeStudentClassModal.vue';
+import StudentProfileModal from '@/components/staff/StudentProfileModal.vue';
 
 const router = useRouter();
 
@@ -138,12 +139,15 @@ function confirmDelete(title, text) {
 /* disable actions while deleting to avoid duplicate clicks */
 const isDeleting = ref(false);
 
-/* Row menu + chuyển lớp 1 học sinh */
+/* Row menu + chuyển lớp + hồ sơ học sinh */
 const rowMenu = ref();
 const activeRow = ref(null);
 
-const showChangeClass = ref(false); // ✅ state mở modal chuyển lớp
-const studentForChange = ref(null); // ✅ học sinh đang được chọn để chuyển lớp
+const showChangeClass = ref(false);
+const studentForChange = ref(null);
+
+const showProfile = ref(false);
+const studentIdForProfile = ref(null);
 
 function openRowMenu(e, row) {
     activeRow.value = row;
@@ -155,8 +159,17 @@ function openChangeClass(row) {
     showChangeClass.value = true;
 }
 
+function openProfile(row) {
+    if (!row?.id) return;
+    studentIdForProfile.value = row.id;
+    showProfile.value = true;
+}
+
 async function onClassChanged() {
-    // sau khi chuyển lớp thành công, reload lại danh sách
+    await load();
+}
+
+async function onProfileUpdated() {
     await load();
 }
 
@@ -166,10 +179,10 @@ const rowMenuItems = ref([
         label: 'Xem hồ sơ',
         icon: 'fa-regular fa-id-card',
         tone: 'primary',
-        sub: 'Mở trang chi tiết',
+        sub: 'Xem và cập nhật thông tin',
         kb: '↵',
         command: () => {
-            if (activeRow.value?.id) router.push({ name: 'StudentDetail', params: { id: activeRow.value.id } });
+            if (activeRow.value?.id) openProfile(activeRow.value);
         }
     },
     {
@@ -179,14 +192,26 @@ const rowMenuItems = ref([
         sub: 'Đổi lớp hiện tại',
         command: () => {
             if (activeRow.value) {
-                openChangeClass(activeRow.value); // ✅ mở modal chuyển lớp
+                openChangeClass(activeRow.value);
             }
         }
     },
 
     { separator: true },
-    { label: 'Thôi học', icon: 'fa-solid fa-user-minus', tone: 'warn', sub: 'Tạm dừng/hủy học', command: () => {} },
-    { label: 'Bảo lưu', icon: 'fa-solid fa-tent-arrow-left-right', tone: 'info', sub: 'Giữ chỗ cho kỳ sau', command: () => {} },
+    {
+        label: 'Thôi học',
+        icon: 'fa-solid fa-user-minus',
+        tone: 'warn',
+        sub: 'Tạm dừng/hủy học',
+        command: () => {}
+    },
+    {
+        label: 'Bảo lưu',
+        icon: 'fa-solid fa-tent-arrow-left-right',
+        tone: 'info',
+        sub: 'Giữ chỗ cho kỳ sau',
+        command: () => {}
+    },
     {
         label: 'Xóa học sinh',
         icon: 'fa-regular fa-trash-can',
@@ -326,7 +351,10 @@ async function onBulkDelete() {
         selection.value = [];
         await load();
     } catch (e) {
-        await swalToast.fire({ icon: 'error', title: e?.message || 'Xóa danh sách học sinh thất bại' });
+        await swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Xóa danh sách học sinh thất bại'
+        });
     } finally {
         isDeleting.value = false;
     }
@@ -427,10 +455,15 @@ onMounted(load);
                         <div class="flex items-center gap-3">
                             <Avatar :label="(data.name?.[0] ?? 'H').toUpperCase()" class="!bg-slate-100 !text-slate-700" />
                             <div class="min-w-0">
-                                <div class="font-semibold text-slate-900 truncate hover:underline cursor-pointer">{{ data.name }}</div>
+                                <div class="font-semibold text-slate-900 truncate hover:underline cursor-pointer" @click="openProfile(data)">
+                                    {{ data.name }}
+                                </div>
                                 <div class="text-slate-500 text-sm flex items-center gap-3">
                                     <span><i class="fa-regular fa-calendar"></i> {{ formatDob(data.dob) }}</span>
-                                    <span class="flex items-center gap-1"> <i :class="genderIcon(data.gender)"></i> {{ data.gender === 'F' ? 'Nữ' : 'Nam' }} </span>
+                                    <span class="flex items-center gap-1">
+                                        <i :class="genderIcon(data.gender)"></i>
+                                        {{ data.gender === 'F' ? 'Nữ' : 'Nam' }}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -486,6 +519,7 @@ onMounted(load);
         <ImportStudentsModal v-model:modelValue="showImport" @imported="onImported" :useServerTemplate="true" />
         <CreateStudentModal v-model:modelValue="showCreate" @created="onStudentCreated" />
         <ChangeStudentClassModal v-model:modelValue="showChangeClass" :student="studentForChange" @changed="onClassChanged" />
+        <StudentProfileModal v-model:modelValue="showProfile" :studentId="studentIdForProfile" @updated="onProfileUpdated" />
     </div>
 </template>
 

@@ -4,7 +4,6 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 
 import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
-import Calendar from 'primevue/calendar';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
 import Dialog from 'primevue/dialog';
@@ -14,13 +13,14 @@ import Divider from 'primevue/divider';
 import Swal from 'sweetalert2';
 
 import { fetchClassesLite } from '@/service/classService.js';
-import { getAlbumsByClass, getAlbumsByStatus, getAlbumById, createAlbum, approveAlbum, getPhotosByAlbum, addPhotoToAlbum, deleteAlbum, deletePhoto } from '@/service/albumService.js';
+import { getAlbumsByClass, getAlbumsByStatus, getAlbumById, createAlbum, approveAlbum, getPhotosByAlbum, uploadPhotoFileToAlbum, uploadMultiplePhotosToAlbum, addPhotoToAlbumByUrl, deleteAlbum, deletePhoto } from '@/service/albumService.js';
+
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser, getCurrentUsername, fetchCurrentUsername } from '@/service/authService.js';
 
 const auth = useAuthStore();
 
-/* Lấy username đăng nhập: ưu tiên store -> local/JWT -> /auth/me (để luôn có tên người duyệt/người tạo) */
+/* Lấy username đăng nhập */
 const currentUser = ref('system');
 async function ensureUsername() {
     const fromStore = getUsernameFromUser(auth?.user);
@@ -46,7 +46,11 @@ watch(
 
 /* Filters */
 const classes = ref([]);
-const selectedClass = ref(null);
+/**
+ * selectedClassId: chỉ lưu id lớp (number|null)
+ * dropdown dùng optionValue="id"
+ */
+const selectedClassId = ref(null);
 const statusOptions = [
     { label: 'Tất cả', value: 'ALL' },
     { label: 'Chờ duyệt', value: 'PENDING' },
@@ -60,9 +64,9 @@ const keyword = ref('');
 const loading = ref(false);
 const albums = ref([]);
 
-/* Preview cache for card headers: albumId -> [{url, caption}] */
-const previewMap = ref({}); // { [albumId]: Photo[] }
-const previewLoading = ref(new Set()); // Set<albumId>
+/* Preview cache: albumId -> [{url, caption}] */
+const previewMap = ref({});
+const previewLoading = ref(new Set());
 
 /* Dialogs state */
 const showCreate = ref(false);
@@ -71,10 +75,23 @@ const createForm = ref({ classId: null, title: '', description: '' });
 const showDetail = ref(false);
 const activeAlbum = ref(null);
 const photos = ref([]);
-const addingPhoto = ref(false);
-const photoForm = ref({ url: '', caption: '' });
 
-/* Tag styles per status */
+const addingPhoto = ref(false);
+
+/**
+ * Form thêm ảnh:
+ * - files: nhiều file được chọn
+ * - useBatch: true => dùng API /photos/batch
+ * - url: fallback thêm bằng URL 1 ảnh
+ */
+const photoForm = ref({
+    files: [],
+    useBatch: true,
+    url: '',
+    caption: ''
+});
+
+/* Status styles */
 const statusStyle = {
     PENDING: { severity: 'warning', text: 'Chờ duyệt' },
     APPROVED: { severity: 'success', text: 'Đã duyệt' },
@@ -93,38 +110,53 @@ const filteredAlbums = computed(() => {
     return list;
 });
 
+/** SweetAlert2 toast – KHÔNG dùng heightAuto với toast */
 const swalToast = Swal.mixin({
     toast: true,
     position: 'top-end',
     showConfirmButton: false,
     timer: 2200,
-    timerProgressBar: true,
-    heightAuto: false
+    timerProgressBar: true
 });
 
 async function loadClasses() {
-    classes.value = await fetchClassesLite();
-    if (!selectedClass.value && classes.value.length) {
-        selectedClass.value = classes.value[0];
+    const lite = await fetchClassesLite(); // [{ value, label }]
+    // chuẩn hoá thành { id, name }
+    classes.value = lite.map((c) => ({
+        id: c.value,
+        name: c.label
+    }));
+    if (!selectedClassId.value && classes.value.length) {
+        selectedClassId.value = classes.value[0].id;
     }
 }
 
+/** đảm bảo đã có preview hình nhỏ cho album */
 async function ensurePreview(album) {
     if (!album?.id) return;
-    if (previewMap.value[album.id]) return; // already cached
+    if (previewMap.value[album.id]) return;
     if (previewLoading.value.has(album.id)) return;
     previewLoading.value.add(album.id);
     try {
         let pics = [];
-        // Prefer photos embedded in album response if available
         if (Array.isArray(album.photos) && album.photos.length) {
-            pics = album.photos.map((p) => ({ id: p.id, url: p.photoUrl || p.url, caption: p.caption || '' })).filter((p) => !!p.url);
+            pics = album.photos
+                .map((p) => ({
+                    id: p.id,
+                    url: p.photoUrl || p.url,
+                    caption: p.caption || ''
+                }))
+                .filter((p) => !!p.url);
         } else {
-            // Fallback: fetch from /albums/{albumId}/photos
             const res = await getPhotosByAlbum(album.id);
-            pics = (res || []).map((p) => ({ id: p.id, url: p.url, caption: p.caption || '' })).filter((p) => !!p.url);
+            pics = (res || [])
+                .map((p) => ({
+                    id: p.id,
+                    url: p.url,
+                    caption: p.caption || ''
+                }))
+                .filter((p) => !!p.url);
         }
-        // Keep only the first 4 for preview
         previewMap.value = { ...previewMap.value, [album.id]: pics.slice(0, 4) };
     } catch {
         previewMap.value = { ...previewMap.value, [album.id]: [] };
@@ -133,21 +165,27 @@ async function ensurePreview(album) {
     }
 }
 
+/** load album, CHỈ gọi /class/{id} khi có selectedClassId */
 async function loadAlbums() {
     loading.value = true;
     try {
-        if (selectedClass.value) {
-            albums.value = await getAlbumsByClass(selectedClass.value.id);
+        if (selectedClassId.value) {
+            albums.value = await getAlbumsByClass(selectedClassId.value);
         } else if (statusFilter.value !== 'ALL') {
             albums.value = await getAlbumsByStatus(statusFilter.value);
         } else {
             albums.value = [];
-            swalToast.fire({ icon: 'info', title: 'Chọn lớp hoặc trạng thái để lọc album' });
+            swalToast.fire({
+                icon: 'info',
+                title: 'Chọn lớp hoặc trạng thái để lọc album'
+            });
         }
-        // Warm up previews in the background (no need to await)
         Promise.all(albums.value.map((a) => ensurePreview(a))).catch(() => {});
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Không tải được album' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Không tải được album'
+        });
     } finally {
         loading.value = false;
     }
@@ -155,7 +193,7 @@ async function loadAlbums() {
 
 function openCreate() {
     createForm.value = {
-        classId: selectedClass.value?.id || null,
+        classId: selectedClassId.value || null,
         title: '',
         description: ''
     };
@@ -164,7 +202,10 @@ function openCreate() {
 
 async function submitCreate() {
     if (!createForm.value.classId || !createForm.value.title.trim()) {
-        swalToast.fire({ icon: 'info', title: 'Chọn lớp và nhập tiêu đề' });
+        swalToast.fire({
+            icon: 'info',
+            title: 'Chọn lớp và nhập tiêu đề'
+        });
         return;
     }
     try {
@@ -172,19 +213,24 @@ async function submitCreate() {
             classId: createForm.value.classId,
             title: createForm.value.title.trim(),
             description: createForm.value.description?.trim() || '',
-            createdBy: currentUser.value // <- username đăng nhập cho người tạo
+            createdBy: currentUser.value
         };
         const res = await createAlbum(payload);
         showCreate.value = false;
-        swalToast.fire({ icon: 'success', title: 'Tạo album thành công' });
-        // Focus lọc theo lớp chứa album
-        if (!selectedClass.value || selectedClass.value.id !== res.classId) {
-            const found = classes.value.find((c) => c.id === res.classId);
-            if (found) selectedClass.value = found;
+        swalToast.fire({
+            icon: 'success',
+            title: 'Tạo album thành công'
+        });
+
+        if (!selectedClassId.value || selectedClassId.value !== res.classId) {
+            selectedClassId.value = res.classId;
         }
         await loadAlbums();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Tạo album thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Tạo album thất bại'
+        });
     }
 }
 
@@ -192,19 +238,23 @@ async function openDetail(album) {
     try {
         activeAlbum.value = await getAlbumById(album.id);
         photos.value = await getPhotosByAlbum(album.id);
+        // reset form thêm ảnh
+        photoForm.value = { files: [], useBatch: true, url: '', caption: '' };
         showDetail.value = true;
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Không mở được chi tiết album' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Không mở được chi tiết album'
+        });
     }
 }
 
-/* Duyệt / từ chối trong dialog chi tiết */
 async function onApprove(status) {
     if (!activeAlbum.value) return;
     try {
         const updated = await approveAlbum(activeAlbum.value.id, {
-            approvedBy: currentUser.value, // <- username đăng nhập cho người duyệt
-            status // 'APPROVED' | 'REJECTED'
+            approvedBy: currentUser.value,
+            status
         });
         activeAlbum.value = updated;
         swalToast.fire({
@@ -213,11 +263,13 @@ async function onApprove(status) {
         });
         await loadAlbums();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Cập nhật phê duyệt thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Cập nhật phê duyệt thất bại'
+        });
     }
 }
 
-/* Duyệt / từ chối trực tiếp ngoài card */
 async function approveAlbumFromCard(album, status) {
     if (!album?.id) return;
     try {
@@ -230,7 +282,6 @@ async function approveAlbumFromCard(album, status) {
             title: status === 'APPROVED' ? 'Đã duyệt album' : 'Đã từ chối album'
         });
 
-        // Nếu dialog đang mở cùng album, đồng bộ trạng thái
         if (activeAlbum.value && activeAlbum.value.id === album.id) {
             activeAlbum.value.status = status;
             activeAlbum.value.approvedBy = currentUser.value;
@@ -238,35 +289,79 @@ async function approveAlbumFromCard(album, status) {
 
         await loadAlbums();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Cập nhật phê duyệt thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Cập nhật phê duyệt thất bại'
+        });
     }
 }
 
+/**
+ * Thêm ảnh:
+ * - Nếu chọn nhiều file (photoForm.files.length > 0) & useBatch = true -> gọi /photos/batch
+ * - Nếu chỉ chọn 1 file nhưng useBatch = false -> dùng API 1 file
+ * - Nếu không có file nhưng có URL -> dùng API cũ bằng URL
+ */
 async function onAddPhoto() {
     if (!activeAlbum.value) return;
+
     if (activeAlbum.value.status !== 'APPROVED') {
-        swalToast.fire({ icon: 'info', title: 'Chỉ album đã duyệt mới thêm ảnh' });
+        swalToast.fire({
+            icon: 'info',
+            title: 'Chỉ album đã duyệt mới thêm ảnh'
+        });
         return;
     }
-    if (!photoForm.value.url?.trim()) {
-        swalToast.fire({ icon: 'info', title: 'Nhập đường dẫn ảnh' });
+
+    const hasFiles = photoForm.value.files && photoForm.value.files.length > 0;
+    const hasUrl = photoForm.value.url?.trim();
+
+    if (!hasFiles && !hasUrl) {
+        swalToast.fire({
+            icon: 'info',
+            title: 'Chọn ít nhất một file ảnh hoặc nhập URL'
+        });
         return;
     }
+
     addingPhoto.value = true;
     try {
-        await addPhotoToAlbum({
-            albumId: activeAlbum.value.id,
-            photoUrl: photoForm.value.url.trim(),
-            caption: photoForm.value.caption?.trim() || ''
-        });
-        photoForm.value = { url: '', caption: '' };
+        if (hasFiles && photoForm.value.useBatch && photoForm.value.files.length > 1) {
+            const captions = photoForm.value.files.map(() => photoForm.value.caption?.trim() || '');
+            await uploadMultiplePhotosToAlbum({
+                albumId: activeAlbum.value.id,
+                files: photoForm.value.files,
+                captions
+            });
+        } else if (hasFiles && photoForm.value.files.length === 1) {
+            await uploadPhotoFileToAlbum({
+                albumId: activeAlbum.value.id,
+                file: photoForm.value.files[0],
+                caption: photoForm.value.caption?.trim() || ''
+            });
+        } else if (!hasFiles && hasUrl) {
+            await addPhotoToAlbumByUrl({
+                albumId: activeAlbum.value.id,
+                photoUrl: photoForm.value.url.trim(),
+                caption: photoForm.value.caption?.trim() || ''
+            });
+        }
+
+        photoForm.value = { files: [], useBatch: true, url: '', caption: '' };
+
         photos.value = await getPhotosByAlbum(activeAlbum.value.id);
-        // update preview for this album too
         previewMap.value[activeAlbum.value.id] = (photos.value || []).slice(0, 4).map((p) => ({ id: p.id, url: p.url, caption: p.caption || '' }));
-        swalToast.fire({ icon: 'success', title: 'Đã thêm ảnh' });
+
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã thêm ảnh'
+        });
         await loadAlbums();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Thêm ảnh thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Thêm ảnh thất bại'
+        });
     } finally {
         addingPhoto.value = false;
     }
@@ -285,14 +380,23 @@ async function onDeletePhoto(p) {
     try {
         await deletePhoto(p.id);
         photos.value = photos.value.filter((x) => x.id !== p.id);
-        // update preview cache if detail album is open
         if (activeAlbum.value?.id) {
-            previewMap.value[activeAlbum.value.id] = (photos.value || []).slice(0, 4).map((x) => ({ id: x.id, url: x.url, caption: x.caption || '' }));
+            previewMap.value[activeAlbum.value.id] = (photos.value || []).slice(0, 4).map((x) => ({
+                id: x.id,
+                url: x.url,
+                caption: x.caption || ''
+            }));
         }
-        swalToast.fire({ icon: 'success', title: 'Đã xóa ảnh' });
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã xóa ảnh'
+        });
         await loadAlbums();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Xóa ảnh thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Xóa ảnh thất bại'
+        });
     }
 }
 
@@ -311,14 +415,20 @@ async function onDeleteAlbum(a) {
         albums.value = albums.value.filter((x) => x.id !== a.id);
         if (showDetail.value && activeAlbum.value?.id === a.id) showDetail.value = false;
         delete previewMap.value[a.id];
-        swalToast.fire({ icon: 'success', title: 'Đã xóa album' });
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã xóa album'
+        });
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Xóa album thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Xóa album thất bại'
+        });
     }
 }
 
 onMounted(async () => {
-    await ensureUsername(); // lấy username ngay khi vào trang
+    await ensureUsername();
     await loadClasses();
     await loadAlbums();
 });
@@ -346,7 +456,7 @@ onMounted(async () => {
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div>
                         <label class="label">Lọc theo lớp</label>
-                        <Dropdown v-model="selectedClass" :options="classes" optionLabel="name" class="w-full" placeholder="Chọn lớp" @change="loadAlbums" />
+                        <Dropdown v-model="selectedClassId" :options="classes" optionLabel="name" optionValue="id" class="w-full" placeholder="Chọn lớp" @change="loadAlbums" />
                     </div>
                     <div>
                         <label class="label">Trạng thái</label>
@@ -368,18 +478,15 @@ onMounted(async () => {
             <Card v-for="a in filteredAlbums" :key="a.id" class="album-card">
                 <template #header>
                     <div class="preview-wrapper rounded-t-xl overflow-hidden">
-                        <!-- Show preview grid if we have photos -->
                         <div v-if="previewMap[a.id]?.length" class="preview-grid">
                             <template v-for="(p, idx) in previewMap[a.id]" :key="p.id || idx">
                                 <div class="preview-tile" :class="`tile-${idx + 1}`">
                                     <img :src="p.url" :alt="p.caption" />
                                 </div>
                             </template>
-                            <!-- Overlay for more count (only if BE embedded total) -->
                             <div v-if="(a.photos?.length || 0) > 4" class="preview-overlay">+{{ (a.photos?.length || 0) - 4 }}</div>
                         </div>
-                        <!-- Placeholder when no photo -->
-                        <div v-else class="placeholder flex items-center justify-center">
+                        <div class="placeholder flex items-center justify-center" v-else>
                             <i class="fa-solid fa-image text-5xl text-indigo-300"></i>
                         </div>
                     </div>
@@ -394,15 +501,22 @@ onMounted(async () => {
 
                 <template #content>
                     <div class="space-y-2">
-                        <div class="text-slate-600 text-sm line-clamp-2">{{ a.description || 'Không có mô tả' }}</div>
+                        <div class="text-slate-600 text-sm line-clamp-2">
+                            {{ a.description || 'Không có mô tả' }}
+                        </div>
                         <div class="text-slate-700 text-sm"><i class="fa-solid fa-school mr-1"></i>{{ a.className }}</div>
                         <div class="text-slate-500 text-xs">
-                            <i class="fa-regular fa-user mr-1"></i>Tạo bởi: <b>{{ a.createdBy || '—' }}</b>
-                            <span v-if="a.createdAt"> • {{ new Date(a.createdAt).toLocaleString('vi-VN') }}</span>
+                            <i class="fa-regular fa-user mr-1"></i>Tạo bởi:
+                            <b>{{ a.createdBy || '—' }}</b>
+                            <span v-if="a.createdAt"> • {{ new Date(a.createdAt).toLocaleString('vi-VN') }} </span>
                         </div>
                         <div class="text-slate-500 text-xs" v-if="a.approvedBy || a.approvedAt">
-                            <i class="fa-regular fa-circle-check mr-1"></i>Duyệt: <b>{{ a.approvedBy || '—' }}</b>
-                            <span v-if="a.approvedAt"> • {{ new Date(a.approvedAt).toLocaleString('vi-VN') }}</span>
+                            <i class="fa-regular fa-circle-check mr-1"></i>Duyệt:
+                            <b>{{ a.approvedBy || '—' }}</b>
+                            <span v-if="a.approvedAt">
+                                •
+                                {{ new Date(a.approvedAt).toLocaleString('vi-VN') }}
+                            </span>
                         </div>
                     </div>
                 </template>
@@ -430,7 +544,7 @@ onMounted(async () => {
             <div class="space-y-3">
                 <div>
                     <label class="label">Lớp <span class="req">*</span></label>
-                    <Dropdown v-model="createForm.classId" :options="classes.map((c) => ({ label: c.name, value: c.id }))" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" />
+                    <Dropdown v-model="createForm.classId" :options="classes" optionLabel="name" optionValue="id" class="w-full" placeholder="Chọn lớp" />
                 </div>
                 <div>
                     <label class="label">Tiêu đề <span class="req">*</span></label>
@@ -462,20 +576,37 @@ onMounted(async () => {
             </template>
 
             <div class="space-y-4">
-                <div class="text-slate-600 text-sm">{{ activeAlbum?.description || 'Không có mô tả' }}</div>
+                <div class="text-slate-600 text-sm">
+                    {{ activeAlbum?.description || 'Không có mô tả' }}
+                </div>
 
                 <Divider />
 
-                <!-- Add photo -->
+                <!-- Add photo (multiple files + optional URL) -->
                 <div class="rounded-xl ring-1 ring-slate-200 p-3 bg-slate-50/50">
-                    <div class="font-semibold mb-2">Thêm ảnh (URL)</div>
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <InputText v-model="photoForm.url" class="md:col-span-3 w-full" placeholder="https://..." />
-                        <InputText v-model="photoForm.caption" class="w-full" placeholder="Chú thích (tuỳ chọn)" />
+                    <div class="font-semibold mb-2">Thêm ảnh</div>
+
+                    <!-- Chọn nhiều file -->
+                    <div class="mb-2 space-y-1">
+                        <input type="file" accept="image/*" multiple @change="(e) => (photoForm.files = Array.from(e.target.files || []))" />
+                        <div class="text-xs text-slate-500">Có thể chọn nhiều ảnh cùng lúc. Mặc định sẽ upload tất cả ảnh này lên Cloudinary.</div>
                     </div>
+
+                    <!-- Chế độ sử dụng batch -->
+                    <div class="mb-2 text-xs text-slate-600 flex items-center gap-2">
+                        <input type="checkbox" v-model="photoForm.useBatch" id="useBatch" />
+                        <label for="useBatch"> Gửi nhiều ảnh trong 1 lần (batch) khi chọn &gt; 1 file </label>
+                    </div>
+
+                    <!-- URL + caption -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-2 mt-2">
+                        <InputText v-model="photoForm.url" class="md:col-span-3 w-full" placeholder="https://... (tuỳ chọn nếu đã chọn file)" />
+                        <InputText v-model="photoForm.caption" class="w-full" placeholder="Chú thích dùng chung cho các ảnh" />
+                    </div>
+
                     <div class="mt-2">
                         <Button class="btn-primary" :label="addingPhoto ? 'Đang thêm...' : 'Thêm ảnh'" :disabled="addingPhoto" @click="onAddPhoto" />
-                        <span class="text-xs text-slate-500 ml-2">Chỉ album đã duyệt mới thêm ảnh</span>
+                        <span class="text-xs text-slate-500 ml-2"> Chỉ album đã duyệt mới thêm ảnh. Nếu chọn file, ảnh sẽ được upload lên Cloudinary và tự động lấy URL. </span>
                     </div>
                 </div>
 
@@ -488,18 +619,22 @@ onMounted(async () => {
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </div>
-                        <div class="text-sm mt-1 font-medium line-clamp-1">{{ p.caption || '—' }}</div>
+                        <div class="text-sm mt-1 font-medium line-clamp-1">
+                            {{ p.caption || '—' }}
+                        </div>
                         <div class="text-xs text-slate-500">
                             {{ p.uploadedAt ? new Date(p.uploadedAt).toLocaleString('vi-VN') : '' }}
                         </div>
                     </div>
                 </div>
 
-                <!-- Approver info (hiển thị rõ người duyệt) -->
                 <div class="text-xs text-slate-500" v-if="activeAlbum?.approvedBy || activeAlbum?.approvedAt">
                     <i class="fa-regular fa-circle-check mr-1"></i>Duyệt bởi:
                     <b>{{ activeAlbum?.approvedBy || '—' }}</b>
-                    <span v-if="activeAlbum?.approvedAt"> • {{ new Date(activeAlbum.approvedAt).toLocaleString('vi-VN') }} </span>
+                    <span v-if="activeAlbum?.approvedAt">
+                        •
+                        {{ new Date(activeAlbum.approvedAt).toLocaleString('vi-VN') }}
+                    </span>
                 </div>
             </div>
 
@@ -560,7 +695,6 @@ onMounted(async () => {
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.04);
 }
 
-/* Preview header */
 .preview-wrapper {
     height: 10rem;
     background: linear-gradient(180deg, #eef2ff, #ffffff);
@@ -588,8 +722,6 @@ onMounted(async () => {
     object-fit: cover;
     display: block;
 }
-
-/* Optional different placements */
 .tile-1 {
     grid-column: 1 / 2;
     grid-row: 1 / 2;
@@ -606,7 +738,6 @@ onMounted(async () => {
     grid-column: 2 / 3;
     grid-row: 2 / 3;
 }
-
 .preview-overlay {
     position: absolute;
     right: 8px;
@@ -620,7 +751,6 @@ onMounted(async () => {
     backdrop-filter: blur(2px);
 }
 
-/* Detail photo actions */
 .photo-card .del-btn {
     position: absolute;
     top: 8px;

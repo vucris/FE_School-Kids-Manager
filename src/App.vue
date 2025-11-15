@@ -1,7 +1,14 @@
-<script setup></script>
-
 <template>
-    <router-view />
+    <div id="app">
+        <GlobalLoadingBar />
+        <router-view />
+    </div>
 </template>
 
-<style scoped></style>
+<script setup>
+import GlobalLoadingBar from '@/components/GlobalLoadingBar.vue';
+</script>
+
+<style>
+/* giữ style cũ của bạn nếu có */
+</style>

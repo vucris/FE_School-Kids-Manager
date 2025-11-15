@@ -8,7 +8,6 @@ import InputText from 'primevue/inputtext';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
 import Tag from 'primevue/tag';
-import Divider from 'primevue/divider';
 import Tooltip from 'primevue/tooltip';
 
 import Swal from 'sweetalert2';
@@ -35,19 +34,16 @@ const auth = useAuthStore();
 /* Lấy username đăng nhập giống với màn Thực đơn */
 const checkedByUser = ref('system');
 async function ensureUsername() {
-    // 1) Pinia store
     const fromStore = getUsernameFromUser(auth?.user);
     if (fromStore) {
         checkedByUser.value = fromStore;
         return;
     }
-    // 2) LocalStorage/JWT
     const fromLocal = getCurrentUsername();
     if (fromLocal) {
         checkedByUser.value = fromLocal;
         return;
     }
-    // 3) /auth/me
     const fromApi = await fetchCurrentUsername();
     checkedByUser.value = fromApi || 'system';
 }
@@ -59,8 +55,11 @@ watch(
     { immediate: true }
 );
 
+/* Lớp */
 const classes = ref([]);
-const selectedClass = ref(null);
+/** selectedClassId: chỉ giữ id lớp */
+const selectedClassId = ref(null);
+
 const day = ref(new Date());
 const keyword = ref('');
 const filterStatus = ref('ALL');
@@ -76,13 +75,13 @@ const counts = computed(() => {
     return c;
 });
 
+/** Toast – bỏ heightAuto khi toast */
 const swalToast = Swal.mixin({
     toast: true,
     position: 'top-end',
     showConfirmButton: false,
     timer: 2200,
-    timerProgressBar: true,
-    heightAuto: false
+    timerProgressBar: true
 });
 
 function toYMD(d) {
@@ -94,14 +93,18 @@ function toYMD(d) {
 }
 
 async function loadClasses() {
-    classes.value = await fetchClassesLite();
-    if (!selectedClass.value && classes.value.length) {
-        selectedClass.value = classes.value[0];
+    const lite = await fetchClassesLite(); // [{ value, label }]
+    classes.value = lite.map((c) => ({
+        id: c.value,
+        name: c.label
+    }));
+    if (!selectedClassId.value && classes.value.length) {
+        selectedClassId.value = classes.value[0].id;
     }
 }
 
 async function loadData() {
-    if (!selectedClass.value || !day.value) {
+    if (!selectedClassId.value || !day.value) {
         swalToast.fire({ icon: 'info', title: 'Chọn lớp và ngày' });
         return;
     }
@@ -109,12 +112,11 @@ async function loadData() {
     dirty.clear();
     try {
         const list = await fetchAttendanceList({
-            classId: selectedClass.value.id,
+            classId: selectedClassId.value,
             date: toYMD(day.value),
             status: filterStatus.value === 'ALL' ? undefined : filterStatus.value,
             keyword: keyword.value || undefined
         });
-        // default status: UNKNOWN hiển thị
         rows.value = list.map((r) => ({
             ...r,
             status: r.status || 'UNKNOWN'
@@ -141,7 +143,7 @@ function setStatus(row, newStatus) {
     if (row.status === newStatus) return;
     row.status = newStatus;
     row.checkTime = new Date().toISOString();
-    row.checkedBy = checkedByUser.value; // <- tên username đăng nhập
+    row.checkedBy = checkedByUser.value;
     dirty.add(row.studentId);
 }
 
@@ -154,7 +156,7 @@ function bulkSet(newStatus) {
 }
 
 async function onSave() {
-    if (!selectedClass.value) {
+    if (!selectedClassId.value) {
         swalToast.fire({ icon: 'info', title: 'Chưa chọn lớp' });
         return;
     }
@@ -165,22 +167,21 @@ async function onSave() {
     saving.value = true;
     try {
         const dateStr = toYMD(day.value);
-        // Lưu tuần tự các bản ghi thay đổi để khớp API đơn lẻ /attendance/update
         for (const studentId of Array.from(dirty)) {
             const row = rows.value.find((x) => x.studentId === studentId);
             if (!row) continue;
             await updateAttendanceStatus({
                 studentId: row.studentId,
-                classId: selectedClass.value.id,
+                classId: selectedClassId.value,
                 date: dateStr,
                 status: row.status,
                 note: row.note ?? '',
-                checkedBy: checkedByUser.value // <- tên username đăng nhập
+                checkedBy: checkedByUser.value
             });
         }
         dirty.clear();
         swalToast.fire({ icon: 'success', title: 'Đã lưu điểm danh' });
-        await loadData(); // reload để đồng bộ checkTime/checkedBy
+        await loadData();
     } catch (e) {
         swalToast.fire({ icon: 'error', title: e?.message || 'Lưu điểm danh thất bại' });
     } finally {
@@ -199,7 +200,7 @@ function onKeydown(e) {
 
 onMounted(async () => {
     window.addEventListener('keydown', onKeydown);
-    await ensureUsername(); // đảm bảo có username ngay khi mở trang
+    await ensureUsername();
     await loadClasses();
     await loadData();
 });
@@ -232,7 +233,7 @@ onBeforeUnmount(() => {
                 <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
                     <div class="md:col-span-2">
                         <label class="label">Chọn lớp</label>
-                        <Dropdown v-model="selectedClass" :options="classes" optionLabel="name" class="w-full" placeholder="Chọn lớp" />
+                        <Dropdown v-model="selectedClassId" :options="classes" optionLabel="name" optionValue="id" class="w-full" placeholder="Chọn lớp" />
                     </div>
                     <div>
                         <label class="label">Ngày</label>
@@ -422,23 +423,23 @@ export default {
 
 .dot-green {
     color: #10b981;
-} /* PRESENT */
+}
 .dot-amber {
     color: #f59e0b;
-} /* EXCUSED */
+}
 .dot-rose {
     color: #ef4444;
-} /* UNEXCUSED */
+}
 .dot-sky {
     color: #0ea5e9;
-} /* EARLY_LEAVE */
+}
 .dot-slate {
     color: #94a3b8;
-} /* UNKNOWN */
+}
 .dot-violet {
     color: #8b5cf6;
-} /* HOLIDAY */
+}
 .dot-orange {
     color: #fb923c;
-} /* DEFERRED */
+}
 </style>

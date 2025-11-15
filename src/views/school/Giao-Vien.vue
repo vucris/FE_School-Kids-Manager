@@ -9,9 +9,13 @@ import Button from 'primevue/button';
 import Avatar from 'primevue/avatar';
 import Menu from 'primevue/menu';
 import Paginator from 'primevue/paginator';
+import Dialog from 'primevue/dialog';
+import { useToast } from 'primevue/usetoast';
 
-import { fetchTeachers, exportTeachersExcel, importTeachersExcel } from '@/service/teacherService.js';
+import { fetchTeachers, exportTeachersExcel, importTeachersExcel, fetchTeacherById, updateTeacher, toggleTeacherStatus } from '@/service/teacherService.js';
 import CreateStaffModal from '@/components/staff/CreateStaffModal.vue';
+
+const toast = useToast();
 
 const showCreate = ref(false);
 
@@ -29,7 +33,7 @@ const sortOrder = ref(0);
 /* filters */
 const statusFilter = ref('all');
 
-/* header inputs (bỏ tài khoản) */
+/* header inputs */
 const fName = ref('');
 const fPhone = ref('');
 
@@ -43,18 +47,83 @@ const counterDeleted = computed(() => allData.value.filter((x) => x.status === '
 
 /* row menu */
 const actionMenu = ref();
-const actionItems = ref([
-    { label: 'Xem chi tiết', icon: 'fa-regular fa-eye', command: () => onAction('view') },
-    { label: 'Sửa giáo viên', icon: 'fa-regular fa-pen-to-square', command: () => onAction('edit') },
-    { separator: true },
-    { label: 'Khóa tài khoản', icon: 'fa-solid fa-lock', command: () => onAction('lock') },
-    { label: 'Xóa', icon: 'fa-regular fa-trash-can', command: () => onAction('delete') }
-]);
 const actionTargetRow = ref(null);
-function onAction(_type) {}
 function openRowMenu(event, row) {
     actionTargetRow.value = row;
     actionMenu.value.toggle(event);
+}
+
+/* modal xem / sửa giáo viên */
+const showView = ref(false);
+const showEdit = ref(false);
+const currentTeacher = ref(null);
+const editForm = ref({
+    fullName: '',
+    email: '',
+    phone: '',
+    gender: '',
+    specialization: '',
+    employeeCode: '',
+    emergencyContact: '',
+    dateOfBirth: ''
+});
+
+/* action menu items */
+const actionItems = ref([
+    { label: 'Xem thông tin', icon: 'fa-regular fa-eye', command: () => onAction('view') },
+    { label: 'Sửa giáo viên', icon: 'fa-regular fa-pen-to-square', command: () => onAction('edit') },
+    { separator: true },
+    { label: 'Khóa / mở khóa tài khoản', icon: 'fa-solid fa-lock', command: () => onAction('lock') }
+]);
+
+async function onAction(type) {
+    const row = actionTargetRow.value;
+    if (!row) return;
+
+    try {
+        if (type === 'view') {
+            const t = await fetchTeacherById(row.id);
+            currentTeacher.value = t;
+            showView.value = true;
+        } else if (type === 'edit') {
+            const t = await fetchTeacherById(row.id);
+            currentTeacher.value = t;
+            editForm.value = {
+                fullName: t.name || '',
+                email: t.email || '',
+                phone: t.phone || '',
+                gender: t.gender || '',
+                specialization: t.specialization || '',
+                employeeCode: t.employeeCode || '',
+                emergencyContact: t.emergencyContact || '',
+                dateOfBirth: t.dateOfBirth || ''
+            };
+            showEdit.value = true;
+        } else if (type === 'lock') {
+            await toggleTeacherStatus(row.id);
+            toast.add({ severity: 'success', summary: 'Thành công', detail: 'Đã cập nhật trạng thái tài khoản', life: 2500 });
+            await load();
+        }
+    } catch (e) {
+        console.error(e);
+        const msg = e?.response?.data?.message || e?.message || 'Có lỗi xảy ra';
+        toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+    }
+}
+
+/* lưu sửa giáo viên */
+async function saveEdit() {
+    if (!currentTeacher.value) return;
+    try {
+        await updateTeacher(currentTeacher.value.id, editForm.value);
+        toast.add({ severity: 'success', summary: 'Thành công', detail: 'Cập nhật giáo viên thành công', life: 2500 });
+        showEdit.value = false;
+        await load();
+    } catch (e) {
+        console.error(e);
+        const msg = e?.response?.data?.message || e?.message || 'Có lỗi xảy ra khi cập nhật';
+        toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+    }
 }
 
 /* helpers */
@@ -205,7 +274,9 @@ onMounted(load);
                     <template #header>
                         <div class="header-filter nowrap">
                             <InputText v-model="fName" class="w-full" placeholder="Tên giáo viên" />
-                            <button class="sort-btn" @click="onSort('name')" :aria-label="'Sắp xếp tên'"><i class="fa-solid fa-up-down"></i></button>
+                            <button class="sort-btn" @click="onSort('name')" :aria-label="'Sắp xếp tên'">
+                                <i class="fa-solid fa-up-down"></i>
+                            </button>
                         </div>
                     </template>
                     <template #body="{ data }">
@@ -225,7 +296,9 @@ onMounted(load);
                     <template #header>
                         <div class="header-filter nowrap">
                             <span class="font-semibold">Ngày sinh</span>
-                            <button class="sort-btn" @click="onSort('dateOfBirth')" :aria-label="'Sắp xếp ngày sinh'"><i class="fa-solid fa-up-down"></i></button>
+                            <button class="sort-btn" @click="onSort('dateOfBirth')" :aria-label="'Sắp xếp ngày sinh'">
+                                <i class="fa-solid fa-up-down"></i>
+                            </button>
                         </div>
                     </template>
                     <template #body="{ data }">
@@ -238,11 +311,16 @@ onMounted(load);
                     <template #header>
                         <div class="header-filter nowrap">
                             <span class="font-semibold">Giới tính</span>
-                            <button class="sort-btn" @click="onSort('gender')" :aria-label="'Sắp xếp giới tính'"><i class="fa-solid fa-up-down"></i></button>
+                            <button class="sort-btn" @click="onSort('gender')" :aria-label="'Sắp xếp giới tính'">
+                                <i class="fa-solid fa-up-down"></i>
+                            </button>
                         </div>
                     </template>
                     <template #body="{ data }">
-                        <span class="inline-flex items-center gap-1"> <i :class="genderIconClass(data.gender)"></i> {{ genderLabel(data.gender) }} </span>
+                        <span class="inline-flex items-center gap-1">
+                            <i :class="genderIconClass(data.gender)"></i>
+                            {{ genderLabel(data.gender) }}
+                        </span>
                     </template>
                 </Column>
 
@@ -251,30 +329,32 @@ onMounted(load);
                     <template #header>
                         <div class="header-filter nowrap">
                             <InputText v-model="fPhone" class="w-full" placeholder="Số điện thoại" />
-                            <button class="sort-btn" @click="onSort('phone')" :aria-label="'Sắp xếp số điện thoại'"><i class="fa-solid fa-up-down"></i></button>
+                            <button class="sort-btn" @click="onSort('phone')" :aria-label="'Sắp xếp số điện thoại'">
+                                <i class="fa-solid fa-up-down"></i>
+                            </button>
                         </div>
                     </template>
-                    <template #body="{ data }"
-                        ><span>{{ data.phone || '-' }}</span></template
-                    >
+                    <template #body="{ data }">
+                        <span>{{ data.phone || '-' }}</span>
+                    </template>
                 </Column>
 
                 <!-- Chức vụ -->
                 <Column header="Chức vụ" headerClass="th-nowrap" headerStyle="width: 160px" bodyStyle="width: 160px" bodyClass="cell-tight">
-                    <template #body="{ data }"
-                        ><span class="pill pill--role"
-                            ><span class="pill__text">{{ roleLabel(data.role) }}</span></span
-                        ></template
-                    >
+                    <template #body="{ data }">
+                        <span class="pill pill--role">
+                            <span class="pill__text">{{ roleLabel(data.role) }}</span>
+                        </span>
+                    </template>
                 </Column>
 
                 <!-- Trạng thái -->
                 <Column header="Trạng thái" headerClass="th-nowrap" headerStyle="width: 160px" bodyStyle="width: 160px" bodyClass="cell-tight">
-                    <template #body="{ data }"
-                        ><span class="pill pill--status" :class="statusClass(data.status)"
-                            ><span class="pill__text">{{ statusLabel(data.status) }}</span></span
-                        ></template
-                    >
+                    <template #body="{ data }">
+                        <span class="pill pill--status" :class="statusClass(data.status)">
+                            <span class="pill__text">{{ statusLabel(data.status) }}</span>
+                        </span>
+                    </template>
                 </Column>
 
                 <!-- Hành động -->
@@ -290,15 +370,107 @@ onMounted(load);
             </div>
         </div>
 
-        <Menu ref="actionMenu" id="row_actions_menu" :model="actionItems" :popup="true">
-            <template #item="{ item, label }">
-                <a class="p-menuitem-link"
-                    ><i :class="['mr-2', item.icon]"></i><span>{{ label }}</span></a
-                >
+        <Menu ref="actionMenu" id="row_actions_menu" :model="actionItems" :popup="true" class="action-menu">
+            <template #item="{ item }">
+                <button type="button" class="action-menu-item" @click="item.command && item.command()">
+                    <span class="action-menu-icon-wrapper">
+                        <i :class="item.icon"></i>
+                    </span>
+                    <span class="action-menu-label">
+                        {{ item.label }}
+                    </span>
+                </button>
             </template>
         </Menu>
 
         <CreateStaffModal v-model:modelValue="showCreate" @created="onStaffCreated" />
+
+        <!-- Dialog xem thông tin giáo viên -->
+        <Dialog v-model:visible="showView" modal header="Thông tin giáo viên" :style="{ width: '500px' }">
+            <div v-if="currentTeacher" class="space-y-2">
+                <div class="flex items-center gap-3 mb-3">
+                    <Avatar v-if="currentTeacher.avatarUrl" :image="currentTeacher.avatarUrl" shape="circle" size="large" />
+                    <Avatar v-else :label="(currentTeacher.name?.[0] ?? 'N').toUpperCase()" shape="circle" class="!bg-slate-100 !text-slate-700" size="large" />
+                    <div>
+                        <div class="font-semibold text-lg">{{ currentTeacher.name }}</div>
+                        <div class="text-sm text-slate-500">{{ currentTeacher.email || '-' }}</div>
+                    </div>
+                </div>
+
+                <div><span class="font-semibold">SĐT:</span> {{ currentTeacher.phone || '-' }}</div>
+                <div>
+                    <span class="font-semibold">Giới tính:</span>
+                    {{ genderLabel(currentTeacher.gender) }}
+                </div>
+                <div>
+                    <span class="font-semibold">Ngày sinh:</span>
+                    {{ formatDate(currentTeacher.dateOfBirth) }}
+                </div>
+                <div>
+                    <span class="font-semibold">Chuyên môn:</span>
+                    {{ currentTeacher.specialization || '-' }}
+                </div>
+                <div>
+                    <span class="font-semibold">Mã nhân viên:</span>
+                    {{ currentTeacher.employeeCode || '-' }}
+                </div>
+                <div>
+                    <span class="font-semibold">Liên hệ khẩn cấp:</span>
+                    {{ currentTeacher.emergencyContact || '-' }}
+                </div>
+                <div>
+                    <span class="font-semibold">Ngày vào làm:</span>
+                    {{ formatDate(currentTeacher.joinDate) }}
+                </div>
+                <div>
+                    <span class="font-semibold">Trạng thái:</span>
+                    {{ statusLabel(currentTeacher.status) }}
+                </div>
+            </div>
+        </Dialog>
+
+        <!-- Dialog sửa giáo viên -->
+        <Dialog v-model:visible="showEdit" modal header="Sửa thông tin giáo viên" :style="{ width: '500px' }">
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Họ tên</label>
+                    <InputText v-model="editForm.fullName" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Email</label>
+                    <InputText v-model="editForm.email" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Số điện thoại</label>
+                    <InputText v-model="editForm.phone" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Giới tính (nam/nu)</label>
+                    <InputText v-model="editForm.gender" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Chuyên môn</label>
+                    <InputText v-model="editForm.specialization" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Mã nhân viên</label>
+                    <InputText v-model="editForm.employeeCode" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Liên hệ khẩn cấp</label>
+                    <InputText v-model="editForm.emergencyContact" class="w-full" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Ngày sinh (yyyy-MM-dd)</label>
+                    <InputText v-model="editForm.dateOfBirth" class="w-full" />
+                </div>
+
+                <div class="flex justify-end gap-2 mt-3">
+                    <Button label="Hủy" class="p-button-text" @click="showEdit = false" />
+                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveEdit" />
+                </div>
+            </div>
+        </Dialog>
     </div>
 </template>
 
@@ -459,5 +631,44 @@ onMounted(load);
 }
 :deep(.p-datatable .p-datatable-thead > tr > th) {
     background: #fff;
+}
+/* Menu hành động giống Học sinh */
+.action-menu :deep(.p-menu-list) {
+  padding: 4px 0;
+}
+
+.action-menu-item {
+  width: 100%;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.action-menu-item:hover {
+  background-color: #f1f5f9;
+}
+
+.action-menu-icon-wrapper {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e5e7eb;
+  color: #0f172a;
+  flex-shrink: 0;
+}
+
+.action-menu-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
 }
 </style>

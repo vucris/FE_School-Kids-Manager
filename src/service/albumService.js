@@ -55,10 +55,12 @@ export async function getAlbumById(id) {
     return data ? mapAlbum(data) : null;
 }
 
-/* POST /albums/create */
+/* POST /albums/create (body JSON, không ảnh) */
 export async function createAlbum({ classId, title, description, createdBy }) {
     const body = { classId, title, description, createdBy };
-    const res = await http.post(withApiV1('/albums/create'), body, { headers: { Accept: 'application/json' } });
+    const res = await http.post(withApiV1('/albums/create'), body, {
+        headers: { Accept: 'application/json' }
+    });
     const data = res?.data?.data || res?.data;
     return data ? mapAlbum(data) : null;
 }
@@ -66,7 +68,9 @@ export async function createAlbum({ classId, title, description, createdBy }) {
 /* PUT /albums/{albumId}/approval */
 export async function approveAlbum(albumId, { approvedBy, status }) {
     const body = { approvedBy, status }; // APPROVED | REJECTED
-    const res = await http.put(withApiV1(`/albums/${albumId}/approval`), body, { headers: { Accept: 'application/json' } });
+    const res = await http.put(withApiV1(`/albums/${albumId}/approval`), body, {
+        headers: { Accept: 'application/json' }
+    });
     const data = res?.data?.data || res?.data;
     return data ? mapAlbum(data) : null;
 }
@@ -78,10 +82,85 @@ export async function getPhotosByAlbum(albumId) {
     return raw.map(mapPhoto);
 }
 
-/* POST /albums/photos */
-export async function addPhotoToAlbum({ albumId, photoUrl, caption }) {
+/**
+ * POST /albums/{albumId}/photos (multipart/form-data)
+ * Thêm 1 ảnh bằng file local -> BE upload Cloudinary -> trả về URL
+ */
+export async function uploadPhotoFileToAlbum({ albumId, file, caption }) {
+    if (!albumId || !file) {
+        throw new Error('albumId và file là bắt buộc');
+    }
+
+    const formData = new FormData();
+
+    const meta = {
+        albumId,
+        caption: caption || ''
+    };
+    formData.append(
+        'request',
+        new Blob([JSON.stringify(meta)], { type: 'application/json' })
+    );
+    formData.append('photo', file);
+
+    const res = await http.post(withApiV1(`/albums/${albumId}/photos`), formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+            Accept: 'application/json'
+        }
+    });
+
+    const data = res?.data?.data || res?.data;
+    return data ? mapPhoto(data) : null;
+}
+
+/**
+ * POST /albums/{albumId}/photos/batch (multipart/form-data)
+ * Thêm NHIỀU ảnh bằng file local cùng lúc
+ * photos: File[]
+ * captions: string[] (có thể trống hoặc ít phần tử hơn files)
+ */
+export async function uploadMultiplePhotosToAlbum({ albumId, files, captions }) {
+    if (!albumId || !files || !files.length) {
+        throw new Error('albumId và danh sách file là bắt buộc');
+    }
+
+    const formData = new FormData();
+    files.forEach((f) => {
+        formData.append('photos', f);
+    });
+
+    if (Array.isArray(captions) && captions.length) {
+        captions.forEach((c) => {
+            formData.append('captions', c || '');
+        });
+    }
+
+    const res = await http.post(
+        withApiV1(`/albums/${albumId}/photos/batch`),
+        formData,
+        {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+                Accept: 'application/json'
+            }
+        }
+    );
+
+    const raw = res?.data?.data || res?.data || [];
+    const list = Array.isArray(raw) ? raw : [];
+    return list.map(mapPhoto);
+}
+
+/**
+ * POST /albums/photos/url (API cũ)
+ * Thêm 1 ảnh bằng URL trực tiếp (không upload file)
+ */
+export async function addPhotoToAlbumByUrl({ albumId, photoUrl, caption }) {
     const body = { albumId, photoUrl, caption };
-    const res = await http.post(withApiV1('/albums/photos'), body, { headers: { Accept: 'application/json' } });
+    const res = await http.post(withApiV1('/albums/photos/url'), body, {
+        headers: { Accept: 'application/json' }
+    });
     const data = res?.data?.data || res?.data;
     return data ? mapPhoto(data) : null;
 }

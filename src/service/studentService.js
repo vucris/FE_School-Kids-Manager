@@ -135,6 +135,45 @@ export async function createStudent(payload) {
     }
 }
 
+/* Lấy chi tiết 1 học sinh (GET /students/{id}) */
+export async function getStudentById(id) {
+    if (!id) throw new Error('Thiếu id học sinh');
+    try {
+        const url = withApiV1(`/students/${id}`);
+        const res = await http.get(url);
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Không lấy được thông tin học sinh'
+        );
+    }
+}
+
+/* Cập nhật học sinh (PUT /students/update/{id}) */
+export async function updateStudent(id, payload) {
+    if (!id) throw new Error('Thiếu id học sinh');
+    try {
+        const url = withApiV1(`/students/update/${id}`);
+        const res = await http.put(url, payload, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Cập nhật học sinh thất bại'
+        );
+    }
+}
+
 /* ---------------- Lỗi ---------------- */
 function extractErrorMessage(err, fallback = 'Lỗi không xác định') {
     return err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
@@ -433,7 +472,6 @@ export async function changeStudentClass(studentId, newClassId) {
                 }
             }
         );
-        // ApiResponse<StudentResponse> { status, message, data }
         return res?.data?.data || res?.data;
     } catch (err) {
         throw new Error(
@@ -492,7 +530,8 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         let studentCode = (r.studentCode || '').trim();
         if (!studentCode && autoGenerateCode) {
-            studentCode = 'HS' + Date.now().toString().slice(-6) + (Math.floor(Math.random() * 900) + 100);
+            studentCode =
+                'HS' + Date.now().toString().slice(-6) + (Math.floor(Math.random() * 900) + 100);
         }
         if (!studentCode) rowErrors.push('Thiếu studentCode');
 
@@ -515,10 +554,12 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         const parentPhone = (r.parentPhone || '').trim();
         if (!parentPhone) rowErrors.push('Thiếu parentPhone');
-        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone)) rowErrors.push('parentPhone sai định dạng');
+        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone))
+            rowErrors.push('parentPhone sai định dạng');
 
         const parentEmail = (r.parentEmail || '').trim();
-        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail)) rowErrors.push('parentEmail không hợp lệ');
+        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail))
+            rowErrors.push('parentEmail không hợp lệ');
 
         const address = (r.address || '').trim();
 
