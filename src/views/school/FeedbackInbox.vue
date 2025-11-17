@@ -8,50 +8,17 @@ import Calendar from 'primevue/calendar';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
 import Paginator from 'primevue/paginator';
+import Dialog from 'primevue/dialog';
 
-/* ========== STATE (fake data, chưa call API) ========== */
+import { fetchFeedbacks, updateFeedbackStatus, deleteFeedback } from '@/service/feedback.js';
+import { fetchClassOptions } from '@/service/classService.js';
 
-const classes = ref([
-    { id: 1, name: 'Sun Bear - C1' },
-    { id: 2, name: 'Panda Bear - C2' },
-    { id: 3, name: 'Koala Bear - B2' }
-]);
+/* ========== STATE ========== */
 
-const feedbacks = ref([
-    {
-        id: 1,
-        parentName: 'Vũ Thị Thu Hiền',
-        sentTo: 'Giáo viên',
-        studentName: 'Võ Chí Quang',
-        className: 'Sun Bear - C1',
-        classId: 1,
-        sentAt: '2024-12-20T11:29:00',
-        content: 'Cô ơi, hôm nay sinh nhật Sóc, chiều 3h chị đem đồ lên nhờ các cô tổ chức cho cháu với nhé. Cảm ơn cô.',
-        status: 'NEW'
-    },
-    {
-        id: 2,
-        parentName: 'Trần Thị Ngọc Lan',
-        sentTo: 'Giáo viên',
-        studentName: 'Cao Trung Ân',
-        className: 'Panda Bear - C2',
-        classId: 2,
-        sentAt: '2024-12-20T09:23:00',
-        content: 'Cô ơi, hôm nọ Triumph off 2 ngày nên chưa được cân đo, nhờ cô sắp xếp cập nhật chỉ số giúp bố mẹ với ạ.',
-        status: 'CLOSED'
-    },
-    {
-        id: 3,
-        parentName: 'Trần Thị Ngọc Huyền',
-        sentTo: 'Giáo viên',
-        studentName: 'Nguyễn Hoàng Bảo Lâm',
-        className: 'Panda Bear - B1',
-        classId: 3,
-        sentAt: '2024-12-20T08:37:00',
-        content: 'Mẹ chào cô, hôm nay mẹ xin cho Lâm đi học trễ ạ.',
-        status: 'PROCESSING'
-    }
-]);
+// danh sách lớp, sẽ load từ BE
+const classes = ref([]);
+
+const feedbacks = ref([]); // list góp ý từ BE
 
 const keywordParent = ref('');
 const keywordStudent = ref('');
@@ -62,6 +29,13 @@ const statusFilter = ref(null);
 const first = ref(0);
 const rows = ref(10);
 
+const loading = ref(false);
+const errorMessage = ref('');
+
+// Dialog chi tiết
+const detailVisible = ref(false);
+const detailItem = ref(null);
+
 const statusOptions = [
     { label: 'Tất cả', value: null },
     { label: 'Mới gửi', value: 'NEW' },
@@ -69,10 +43,12 @@ const statusOptions = [
     { label: 'Đã đóng', value: 'CLOSED' }
 ];
 
+// Map trạng thái để hiển thị UI
 const statusView = {
     NEW: { text: 'Mới gửi', class: 'bg-amber-500 text-white' },
     PROCESSING: { text: 'Đang xử lý', class: 'bg-blue-600 text-white' },
-    CLOSED: { text: 'Đã đóng', class: 'bg-slate-500 text-white' }
+    CLOSED: { text: 'Đã đóng', class: 'bg-slate-500 text-white' },
+    PENDING: { text: 'Chờ xử lý', class: 'bg-amber-500 text-white' } // phòng trường hợp BE default "PENDING"
 };
 
 /* ========== COMPUTED ========== */
@@ -80,17 +56,24 @@ const statusView = {
 const filteredFeedbacks = computed(() => {
     let list = [...feedbacks.value];
 
+    // Lọc theo lớp (client-side, vì BE trả studentId/classId)
     if (selectedClass.value?.id) {
         list = list.filter((f) => f.classId === selectedClass.value.id);
     }
+
+    // Lọc theo status (client-side)
     if (statusFilter.value) {
         list = list.filter((f) => f.status === statusFilter.value);
     }
+
+    // Lọc theo ngày góp ý (dựa vào messageDate hoặc createdAt)
     if (dateFilter.value) {
-        const d = new Date(dateFilter.value).setHours(0, 0, 0, 0);
+        const filterDay = new Date(dateFilter.value).setHours(0, 0, 0, 0);
         list = list.filter((f) => {
-            const sent = new Date(f.sentAt).setHours(0, 0, 0, 0);
-            return sent === d;
+            const raw = f.messageDate || f.createdAt;
+            if (!raw) return false;
+            const d = new Date(raw).setHours(0, 0, 0, 0);
+            return d === filterDay;
         });
     }
 
@@ -120,22 +103,125 @@ function onPageChange(e) {
     rows.value = e.rows;
 }
 
-function formatTime(dt) {
-    if (!dt) return '';
-    return new Date(dt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-}
-function formatDate(dt) {
-    if (!dt) return '';
-    return new Date(dt).toLocaleDateString('vi-VN');
+function formatTime(value) {
+    if (!value) return '';
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
-/* giả lập thay đổi trạng thái, sau này gọi API rồi cập nhật lại list */
-function changeStatus(item, newStatus) {
-    item.status = newStatus;
+function formatDate(value) {
+    if (!value) return '';
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('vi-VN');
+}
+
+/**
+ * Lấy chuỗi thời gian hiển thị:
+ * - Ưu tiên dùng messageTime từ BE nếu có
+ * - Nếu không có thì format từ messageDate/createdAt
+ */
+function displayTime(feedback) {
+    if (feedback.messageTime) return feedback.messageTime;
+    const raw = feedback.messageDate || feedback.createdAt;
+    return formatTime(raw);
+}
+
+/**
+ * Lấy ngày hiển thị:
+ * - Ưu tiên messageDate
+ * - fallback createdAt
+ */
+function displayDate(feedback) {
+    const raw = feedback.messageDate || feedback.createdAt;
+    return formatDate(raw);
+}
+
+/**
+ * Load danh sách góp ý từ BE
+ */
+async function loadFeedbacks() {
+    loading.value = true;
+    errorMessage.value = '';
+    try {
+        const data = await fetchFeedbacks(); // có thể dùng param nếu muốn filter server-side
+        feedbacks.value = data || [];
+    } catch (e) {
+        console.error(e);
+        errorMessage.value = e.message || 'Có lỗi xảy ra khi tải danh sách góp ý';
+    } finally {
+        loading.value = false;
+    }
+}
+
+/**
+ * Load danh sách lớp từ BE
+ */
+async function loadClasses() {
+    try {
+        const opts = await fetchClassOptions(); // [{ value, label }]
+        classes.value = (opts || []).map((o) => ({
+            id: o.value,
+            name: o.label
+        }));
+    } catch (e) {
+        console.warn('Không load được danh sách lớp, dùng mock tạm:', e?.message || e);
+        classes.value = [
+            { id: 1, name: 'Sun Bear - C1' },
+            { id: 2, name: 'Panda Bear - C2' },
+            { id: 3, name: 'Koala Bear - B2' }
+        ];
+    }
+}
+
+/**
+ * Đổi trạng thái góp ý:
+ * NEW -> PROCESSING -> CLOSED -> PROCESSING...
+ */
+async function changeStatus(item, newStatus) {
+    const oldStatus = item.status;
+    item.status = newStatus; // Optimistic UI
+    try {
+        await updateFeedbackStatus(item.id, newStatus);
+    } catch (e) {
+        item.status = oldStatus; // rollback
+        console.error(e);
+        alert(e.message || 'Không thể cập nhật trạng thái góp ý');
+    }
+}
+
+/**
+ * Xóa 1 góp ý
+ */
+async function removeFeedback(item) {
+    const ok = window.confirm('Bạn có chắc chắn muốn xóa góp ý này?');
+    if (!ok) return;
+    try {
+        await deleteFeedback(item.id);
+        feedbacks.value = feedbacks.value.filter((f) => f.id !== item.id);
+    } catch (e) {
+        console.error(e);
+        alert(e.message || 'Không thể xóa góp ý');
+    }
+}
+
+/**
+ * Mở / đóng dialog chi tiết
+ */
+function openDetail(item) {
+    detailItem.value = item;
+    detailVisible.value = true;
+}
+
+function closeDetail() {
+    detailVisible.value = false;
+    detailItem.value = null;
 }
 
 onMounted(() => {
-    // sau này gọi API load classes + feedbacks ở đây
+    loadClasses();
+    loadFeedbacks();
 });
 </script>
 
@@ -150,6 +236,11 @@ onMounted(() => {
                     <div class="text-slate-500 text-sm">Ghi nhận ý kiến của phụ huynh, phản hồi kịp thời, minh bạch theo từng lớp</div>
                 </div>
             </div>
+        </div>
+
+        <!-- Thông báo error -->
+        <div v-if="errorMessage" class="px-4 py-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200">
+            {{ errorMessage }}
         </div>
 
         <!-- Filters -->
@@ -181,7 +272,10 @@ onMounted(() => {
         </Card>
 
         <!-- Table -->
-        <div class="overflow-x-auto rounded-2xl ring-1 ring-slate-200 bg-white">
+        <div class="overflow-x-auto rounded-2xl ring-1 ring-slate-200 bg-white relative">
+            <!-- Loading overlay -->
+            <div v-if="loading" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu...</div>
+
             <table class="min-w-full text-sm">
                 <thead class="bg-slate-50 border-b text-slate-600">
                     <tr>
@@ -192,7 +286,7 @@ onMounted(() => {
                         <th class="px-3 py-3 text-left min-w-[150px]">Ngày góp ý</th>
                         <th class="px-3 py-3 text-left min-w-[260px]">Nội dung</th>
                         <th class="px-3 py-3 text-center w-32">Trạng thái</th>
-                        <th class="px-3 py-3 text-center w-32">Thao tác</th>
+                        <th class="px-3 py-3 text-center w-40">Thao tác</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -202,12 +296,10 @@ onMounted(() => {
                         </td>
                         <td class="px-3 py-3">
                             <div class="font-medium text-slate-800">{{ f.parentName }}</div>
-                            <div class="text-xs text-slate-500">
-                                Gửi đến: <span class="text-primary font-semibold">{{ f.sentTo }}</span>
-                            </div>
+                            <div class="text-xs text-slate-500">Gửi đến: <span class="text-primary font-semibold">Giáo viên</span></div>
                             <div class="text-xs text-slate-500 flex items-center gap-1">
                                 <i class="fa-regular fa-clock text-sky-500"></i>
-                                {{ formatTime(f.sentAt) }} {{ formatDate(f.sentAt) }}
+                                {{ displayTime(f) }} {{ displayDate(f) }}
                             </div>
                         </td>
                         <td class="px-3 py-3">
@@ -217,7 +309,7 @@ onMounted(() => {
                             <div class="text-slate-800">{{ f.className }}</div>
                         </td>
                         <td class="px-3 py-3">
-                            {{ formatDate(f.sentAt) }}
+                            {{ displayDate(f) }}
                         </td>
                         <td class="px-3 py-3">
                             <div class="max-w-xl line-clamp-3 text-slate-700">
@@ -226,19 +318,26 @@ onMounted(() => {
                         </td>
                         <td class="px-3 py-3 text-center">
                             <span class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold" :class="statusView[f.status]?.class || 'bg-slate-300 text-slate-800'">
-                                {{ statusView[f.status]?.text || 'Không xác định' }}
+                                {{ statusView[f.status]?.text || f.status || 'Không xác định' }}
                             </span>
                         </td>
                         <td class="px-3 py-3 text-center">
                             <div class="flex flex-col gap-1 items-stretch">
-                                <Button v-if="f.status === 'NEW'" class="btn-success text-xs" label="Nhận xử lý" @click.stop="changeStatus(f, 'PROCESSING')" />
-                                <Button v-if="f.status === 'PROCESSING'" class="btn-primary text-xs" label="Đánh dấu đã xong" @click.stop="changeStatus(f, 'CLOSED')" />
-                                <Button v-if="f.status === 'CLOSED'" class="btn-ghost text-xs" label="Mở lại" @click.stop="changeStatus(f, 'PROCESSING')" />
+                                <!-- Xem chi tiết -->
+                                <Button class="btn-ghost text-xs" label="Xem chi tiết" @click.stop="openDetail(f)" />
+
+                                <!-- Đổi trạng thái -->
+                                <Button v-if="f.status === 'NEW' || f.status === 'PENDING'" class="btn-success text-xs" label="Nhận xử lý" @click.stop="changeStatus(f, 'PROCESSING')" />
+                                <Button v-else-if="f.status === 'PROCESSING'" class="btn-primary text-xs" label="Đánh dấu đã xong" @click.stop="changeStatus(f, 'CLOSED')" />
+                                <Button v-else-if="f.status === 'CLOSED'" class="btn-ghost text-xs" label="Mở lại" @click.stop="changeStatus(f, 'PROCESSING')" />
+
+                                <!-- Xóa -->
+                                <Button class="btn-ghost text-xs !text-red-600" label="Xóa" icon="pi pi-trash" @click.stop="removeFeedback(f)" />
                             </div>
                         </td>
                     </tr>
 
-                    <tr v-if="!filteredFeedbacks.length">
+                    <tr v-if="!loading && !filteredFeedbacks.length">
                         <td colspan="8" class="px-3 py-4 text-center text-slate-500">Không có góp ý phù hợp với bộ lọc hiện tại.</td>
                     </tr>
                 </tbody>
@@ -249,6 +348,68 @@ onMounted(() => {
         <div class="flex justify-end">
             <Paginator :rows="rows" :totalRecords="filteredFeedbacks.length" :first="first" @page="onPageChange" class="mt-3" />
         </div>
+
+        <!-- Dialog chi tiết góp ý -->
+        <Dialog v-model:visible="detailVisible" modal :closeOnEscape="true" :dismissableMask="true" :breakpoints="{ '960px': '60vw', '640px': '95vw' }" style="width: 600px" :header="detailItem ? `Chi tiết góp ý #${detailItem.id}` : 'Chi tiết góp ý'">
+            <div v-if="detailItem" class="space-y-4">
+                <!-- Phụ huynh -->
+                <div class="border-b pb-3">
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Thông tin phụ huynh</div>
+                    <div class="flex justify-between text-sm">
+                        <div>
+                            <div class="font-semibold text-slate-800">
+                                {{ detailItem.parentName || '—' }}
+                            </div>
+                            <div class="text-xs text-slate-500">Gửi đến: Giáo viên lớp {{ detailItem.className }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Học sinh & lớp -->
+                <div class="border-b pb-3">
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Học sinh & lớp</div>
+                    <div class="space-y-1 text-sm text-slate-700">
+                        <div>
+                            <span class="font-semibold">Học sinh: </span>{{ detailItem.studentName || '—' }}
+                            <span v-if="detailItem.studentId" class="text-xs text-slate-500"> (ID: {{ detailItem.studentId }}) </span>
+                        </div>
+                        <div>
+                            <span class="font-semibold">Lớp: </span>{{ detailItem.className || '—' }}
+                            <span v-if="detailItem.classId" class="text-xs text-slate-500"> (ID: {{ detailItem.classId }}) </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Thời gian & trạng thái -->
+                <div class="border-b pb-3 flex flex-wrap gap-3 items-center justify-between">
+                    <div class="space-y-1 text-sm text-slate-700">
+                        <div>
+                            <span class="font-semibold">Thời gian gửi: </span>
+                            {{ displayTime(detailItem) }} {{ displayDate(detailItem) }}
+                        </div>
+                        <div v-if="detailItem.createdAt"><span class="font-semibold">Tạo lúc: </span>{{ formatDate(detailItem.createdAt) }}</div>
+                        <div v-if="detailItem.updatedAt"><span class="font-semibold">Cập nhật: </span>{{ formatDate(detailItem.updatedAt) }}</div>
+                    </div>
+                    <div>
+                        <span class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold" :class="statusView[detailItem.status]?.class || 'bg-slate-300 text-slate-800'">
+                            {{ statusView[detailItem.status]?.text || detailItem.status || 'Không xác định' }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Nội dung -->
+                <div>
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Nội dung góp ý</div>
+                    <div class="text-sm leading-relaxed text-slate-800 whitespace-pre-line bg-slate-50 rounded-xl p-3">
+                        {{ detailItem.content }}
+                    </div>
+                </div>
+
+                <div class="flex justify-end mt-3">
+                    <Button label="Đóng" class="btn-ghost text-xs" @click="closeDetail" />
+                </div>
+            </div>
+        </Dialog>
     </div>
 </template>
 

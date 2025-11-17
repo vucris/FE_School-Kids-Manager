@@ -13,7 +13,7 @@ import Divider from 'primevue/divider';
 import Swal from 'sweetalert2';
 
 import { fetchClassesLite } from '@/service/classService.js';
-import { getAlbumsByClass, getAlbumsByStatus, getAlbumById, createAlbum, approveAlbum, getPhotosByAlbum, uploadPhotoFileToAlbum, uploadMultiplePhotosToAlbum, addPhotoToAlbumByUrl, deleteAlbum, deletePhoto } from '@/service/albumService.js';
+import { getAlbumsByClass, getAlbumsByStatus, getAlbumById, createAlbum, approveAlbum, getPhotosByAlbum, uploadPhotosToAlbum, deleteAlbum, deletePhoto } from '@/service/albumService.js';
 
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser, getCurrentUsername, fetchCurrentUsername } from '@/service/authService.js';
@@ -46,10 +46,6 @@ watch(
 
 /* Filters */
 const classes = ref([]);
-/**
- * selectedClassId: chỉ lưu id lớp (number|null)
- * dropdown dùng optionValue="id"
- */
 const selectedClassId = ref(null);
 const statusOptions = [
     { label: 'Tất cả', value: 'ALL' },
@@ -78,16 +74,9 @@ const photos = ref([]);
 
 const addingPhoto = ref(false);
 
-/**
- * Form thêm ảnh:
- * - files: nhiều file được chọn
- * - useBatch: true => dùng API /photos/batch
- * - url: fallback thêm bằng URL 1 ảnh
- */
+/** Form thêm ảnh: chọn file + caption dùng chung */
 const photoForm = ref({
     files: [],
-    useBatch: true,
-    url: '',
     caption: ''
 });
 
@@ -110,7 +99,7 @@ const filteredAlbums = computed(() => {
     return list;
 });
 
-/** SweetAlert2 toast – KHÔNG dùng heightAuto với toast */
+/** Toast – KHÔNG dùng heightAuto với toast */
 const swalToast = Swal.mixin({
     toast: true,
     position: 'top-end',
@@ -121,7 +110,6 @@ const swalToast = Swal.mixin({
 
 async function loadClasses() {
     const lite = await fetchClassesLite(); // [{ value, label }]
-    // chuẩn hoá thành { id, name }
     classes.value = lite.map((c) => ({
         id: c.value,
         name: c.label
@@ -238,8 +226,7 @@ async function openDetail(album) {
     try {
         activeAlbum.value = await getAlbumById(album.id);
         photos.value = await getPhotosByAlbum(album.id);
-        // reset form thêm ảnh
-        photoForm.value = { files: [], useBatch: true, url: '', caption: '' };
+        photoForm.value = { files: [], caption: '' };
         showDetail.value = true;
     } catch (e) {
         swalToast.fire({
@@ -298,9 +285,7 @@ async function approveAlbumFromCard(album, status) {
 
 /**
  * Thêm ảnh:
- * - Nếu chọn nhiều file (photoForm.files.length > 0) & useBatch = true -> gọi /photos/batch
- * - Nếu chỉ chọn 1 file nhưng useBatch = false -> dùng API 1 file
- * - Nếu không có file nhưng có URL -> dùng API cũ bằng URL
+ * - Gửi toàn bộ files qua /albums/{albumId}/photos với captions cùng caption
  */
 async function onAddPhoto() {
     if (!activeAlbum.value) return;
@@ -314,40 +299,25 @@ async function onAddPhoto() {
     }
 
     const hasFiles = photoForm.value.files && photoForm.value.files.length > 0;
-    const hasUrl = photoForm.value.url?.trim();
 
-    if (!hasFiles && !hasUrl) {
+    if (!hasFiles) {
         swalToast.fire({
             icon: 'info',
-            title: 'Chọn ít nhất một file ảnh hoặc nhập URL'
+            title: 'Chọn ít nhất một file ảnh'
         });
         return;
     }
 
     addingPhoto.value = true;
     try {
-        if (hasFiles && photoForm.value.useBatch && photoForm.value.files.length > 1) {
-            const captions = photoForm.value.files.map(() => photoForm.value.caption?.trim() || '');
-            await uploadMultiplePhotosToAlbum({
-                albumId: activeAlbum.value.id,
-                files: photoForm.value.files,
-                captions
-            });
-        } else if (hasFiles && photoForm.value.files.length === 1) {
-            await uploadPhotoFileToAlbum({
-                albumId: activeAlbum.value.id,
-                file: photoForm.value.files[0],
-                caption: photoForm.value.caption?.trim() || ''
-            });
-        } else if (!hasFiles && hasUrl) {
-            await addPhotoToAlbumByUrl({
-                albumId: activeAlbum.value.id,
-                photoUrl: photoForm.value.url.trim(),
-                caption: photoForm.value.caption?.trim() || ''
-            });
-        }
+        const captions = photoForm.value.files.map(() => photoForm.value.caption?.trim() || '');
+        await uploadPhotosToAlbum({
+            albumId: activeAlbum.value.id,
+            files: photoForm.value.files,
+            captions
+        });
 
-        photoForm.value = { files: [], useBatch: true, url: '', caption: '' };
+        photoForm.value = { files: [], caption: '' };
 
         photos.value = await getPhotosByAlbum(activeAlbum.value.id);
         previewMap.value[activeAlbum.value.id] = (photos.value || []).slice(0, 4).map((p) => ({ id: p.id, url: p.url, caption: p.caption || '' }));
@@ -433,6 +403,8 @@ onMounted(async () => {
     await loadAlbums();
 });
 </script>
+
+<!-- template + style y hệt bản cuối cùng bạn gửi, chỉ sửa phần sự kiện cho đúng (đã chỉnh ở trên) -->
 
 <template>
     <div class="px-4 md:px-6 lg:px-10 py-6 space-y-5">

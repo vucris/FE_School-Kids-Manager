@@ -42,7 +42,7 @@ const model = ref([
             { label: 'Điểm danh', icon: 'fa-solid fa-check-circle', to: '/school/AttendanceBoard' },
             { label: 'Đơn xin nghỉ', icon: 'fa-solid fa-file-lines', to: '/activity/leave-request' },
             { label: 'Đơn xin bảo lưu', icon: 'fa-solid fa-file-medical', to: '/activity/suspend' },
-            { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/activity/health' },
+            { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/school/healthrecord' },
             { label: 'Album', icon: 'fa-solid fa-image', to: '/school/album-manager' },
             { label: 'Bài viết', icon: 'fa-solid fa-pen-to-square', to: '/school/new-list' },
             { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/school/feedback-inbox' }
