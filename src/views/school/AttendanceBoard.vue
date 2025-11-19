@@ -64,6 +64,7 @@ const day = ref(new Date());
 const keyword = ref('');
 const filterStatus = ref('ALL');
 
+/** loading: dùng overlay giống feedback */
 const loading = ref(false);
 const saving = ref(false);
 const rows = ref([]); // [{studentId, studentName, className, status, checkedBy, checkTime, note}]
@@ -103,11 +104,12 @@ async function loadClasses() {
     }
 }
 
+/** Tải danh sách điểm danh
+ *  ĐÃ CHỈNH: không toast "Chọn lớp và ngày" nữa, chỉ không load nếu thiếu
+ */
 async function loadData() {
-    if (!selectedClassId.value || !day.value) {
-        swalToast.fire({ icon: 'info', title: 'Chọn lớp và ngày' });
-        return;
-    }
+    if (!selectedClassId.value || !day.value) return;
+
     loading.value = true;
     dirty.clear();
     try {
@@ -123,7 +125,10 @@ async function loadData() {
         }));
         swalToast.fire({ icon: 'success', title: 'Đã tải dữ liệu' });
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Không tải được điểm danh' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Không tải được điểm danh'
+        });
     } finally {
         loading.value = false;
     }
@@ -183,7 +188,10 @@ async function onSave() {
         swalToast.fire({ icon: 'success', title: 'Đã lưu điểm danh' });
         await loadData();
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Lưu điểm danh thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Lưu điểm danh thất bại'
+        });
     } finally {
         saving.value = false;
     }
@@ -198,6 +206,21 @@ function onKeydown(e) {
     onSave();
 }
 
+/* TỰ ĐỘNG LOAD khi chọn lớp xong */
+watch(selectedClassId, () => {
+    loadData();
+});
+
+/* TỰ ĐỘNG LOAD khi đổi ngày */
+watch(day, () => {
+    loadData();
+});
+
+/* TỰ ĐỘNG LOAD khi đổi filter trạng thái */
+watch(filterStatus, () => {
+    loadData();
+});
+
 onMounted(async () => {
     window.addEventListener('keydown', onKeydown);
     await ensureUsername();
@@ -210,14 +233,23 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="px-4 md:px-6 lg:px-10 py-6 space-y-5">
+    <div class="px-4 md:px-6 lg:px-10 py-6 space-y-5 relative">
+        <!-- Loading overlay kiểu feedback -->
+        <div v-if="loading" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
+            <i class="fa-solid fa-spinner fa-spin mr-2"></i>
+            Đang tải dữ liệu điểm danh...
+        </div>
+
         <!-- Header -->
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
                 <i class="fa-solid fa-user-check text-2xl text-primary"></i>
                 <div>
                     <div class="text-2xl font-extrabold tracking-tight text-slate-800">Điểm danh đến</div>
-                    <div class="text-slate-500 text-sm">Ngày: {{ day ? new Date(day).toLocaleDateString('vi-VN') : '' }}</div>
+                    <div class="text-slate-500 text-sm">
+                        Ngày:
+                        {{ day ? new Date(day).toLocaleDateString('vi-VN') : '' }}
+                    </div>
                 </div>
             </div>
             <div class="flex items-center gap-2">
@@ -241,7 +273,19 @@ onBeforeUnmount(() => {
                     </div>
                     <div>
                         <label class="label">Trạng thái</label>
-                        <Dropdown v-model="filterStatus" class="w-full" :options="[{ label: 'Tất cả', value: 'ALL' }, ...Object.values(STATUS).map((s) => ({ label: s.label, value: s.key }))]" optionLabel="label" optionValue="value" />
+                        <Dropdown
+                            v-model="filterStatus"
+                            class="w-full"
+                            :options="[
+                                { label: 'Tất cả', value: 'ALL' },
+                                ...Object.values(STATUS).map((s) => ({
+                                    label: s.label,
+                                    value: s.key
+                                }))
+                            ]"
+                            optionLabel="label"
+                            optionValue="value"
+                        />
                     </div>
                     <div>
                         <label class="label">Tìm kiếm</label>
@@ -253,7 +297,7 @@ onBeforeUnmount(() => {
 
         <!-- Status header with counts + bulk -->
         <div class="flex flex-wrap items-center gap-2">
-            <span class="text-slate-700 font-semibold mr-1">Tổng {{ counts.total }} học sinh</span>
+            <span class="text-slate-700 font-semibold mr-1"> Tổng {{ counts.total }} học sinh </span>
             <template v-for="s in Object.values(STATUS)" :key="s.key">
                 <button v-tooltip.top="`Đặt tất cả là ${s.label}`" class="chip" :class="`chip-${s.color}`" @click="bulkSet(s.key)">
                     <i class="fa-solid fa-circle mr-1 text-[10px]"></i>
@@ -280,7 +324,9 @@ onBeforeUnmount(() => {
                 <tbody>
                     <tr v-for="(r, idx) in filteredRows" :key="r.studentId" class="hover:bg-slate-50 transition">
                         <td class="td text-slate-500">{{ idx + 1 }}</td>
-                        <td class="td font-medium text-slate-800">{{ r.studentName }}</td>
+                        <td class="td font-medium text-slate-800">
+                            {{ r.studentName }}
+                        </td>
                         <td class="td text-slate-700">{{ r.className }}</td>
 
                         <td v-for="col in statusCols" :key="col.key" class="td text-center">
@@ -294,7 +340,7 @@ onBeforeUnmount(() => {
                                     <i class="fa-regular fa-clock mr-1"></i>
                                     {{ r.checkTime ? new Date(r.checkTime).toLocaleString('vi-VN') : '' }}
                                 </span>
-                                <span v-if="r.checkedBy" class="text-xs text-slate-500">• Bởi {{ r.checkedBy }}</span>
+                                <span v-if="r.checkedBy" class="text-xs text-slate-500"> • Bởi {{ r.checkedBy }} </span>
                             </div>
                             <div v-else class="text-slate-400 text-sm italic">Chưa có</div>
                         </td>
@@ -305,8 +351,6 @@ onBeforeUnmount(() => {
                     </tr>
                 </tbody>
             </table>
-
-            <div v-if="loading" class="px-4 py-3 text-slate-500 text-sm">Đang tải...</div>
         </div>
     </div>
 </template>

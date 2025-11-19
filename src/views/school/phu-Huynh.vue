@@ -1,21 +1,26 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
+import * as XLSX from 'xlsx';
 
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import InputText from 'primevue/inputtext';
-import Dropdown from 'primevue/dropdown';
 import Button from 'primevue/button';
 import Tag from 'primevue/tag';
 import Paginator from 'primevue/paginator';
 import Menu from 'primevue/menu';
-import ConfirmDialog from 'primevue/confirmdialog';
+import Dialog from 'primevue/dialog';
 
-import { fetchParents, exportParentsExcel, lockParents, unlockParents, deleteParents } from '@/service/parentService.js';
+import Swal from 'sweetalert2';
+
+import { fetchParents, exportParentsExcel, lockParents, unlockParents, deleteParents, importParentsFromExcel } from '@/service/parentService.js';
 import ParentUpsertModal from '@/components/staff/ParentUpsertModal.vue';
 
-const loading = ref(false);
+/* =================== LIST STATE =================== */
+const loadingInit = ref(false);
+const loadingList = ref(false);
+
 const rows = ref([]);
 const totalRecords = ref(0);
 
@@ -24,39 +29,90 @@ const size = ref(10);
 const sortField = ref('');
 const sortOrder = ref(1);
 
-const fSearch = ref(''); // tìm theo tên/sđt/email
-const fStatus = ref({ label: 'Tất cả', value: 'all' });
-const statusOptions = [
-    { label: 'Tất cả', value: 'all' },
-    { label: 'Hoạt động', value: 'active' },
-    { label: 'Đã khóa', value: 'blocked' }
-];
+const fSearch = ref('');
 
-const selection = ref([]);
-const rowMenu = ref();
-const rowMenuModel = ref([
-    { label: 'Xem chi tiết', icon: 'fa-regular fa-eye', command: (e) => onView(e) },
-    { label: 'Sửa', icon: 'fa-regular fa-pen-to-square', command: (e) => onEdit(e) },
-    { separator: true },
-    { label: 'Khóa tài khoản', icon: 'fa-solid fa-lock', command: (e) => onLock(e) },
-    { label: 'Mở khóa', icon: 'fa-solid fa-unlock', command: (e) => onUnlock(e) },
-    { separator: true },
-    { label: 'Xóa', icon: 'fa-regular fa-trash-can', class: 'text-rose-600', command: (e) => onDelete(e) }
-]);
-const activeRow = ref(null);
-
-function openRowMenu(event, row) {
-    activeRow.value = row;
-    rowMenu.value.toggle(event);
-}
-
+/* status tabs + counters */
 const counts = ref({ total: 0, active: 0, blocked: 0 });
+const currentTab = ref('all');
 const statusTabs = computed(() => [
     { key: 'all', label: `Tất cả (${counts.value.total})`, bg: '' },
     { key: 'active', label: `Hoạt động (${counts.value.active})`, bg: 'tab--green' },
     { key: 'blocked', label: `Đã khóa (${counts.value.blocked})`, bg: 'tab--red' }
 ]);
-const currentTab = ref('all');
+
+/* selection + row menu */
+const selection = ref([]);
+const rowMenu = ref();
+const activeRow = ref(null);
+
+function openRowMenu(event, row) {
+    activeRow.value = row;
+    rowMenu.value?.toggle(event);
+}
+
+/* =================== UPSERT MODAL =================== */
+const showUpsert = ref(false);
+const editing = ref(null);
+
+function onCreate() {
+    editing.value = null;
+    showUpsert.value = true;
+}
+function onEdit() {
+    if (!activeRow.value) return;
+    editing.value = activeRow.value;
+    showUpsert.value = true;
+}
+function onView() {
+    if (!activeRow.value) return;
+    editing.value = activeRow.value;
+    showUpsert.value = true;
+}
+async function onAfterUpsert() {
+    showUpsert.value = false;
+    await load(false);
+}
+
+/* =================== IMPORT EXCEL MODAL =================== */
+const showImportModal = ref(false);
+const importLoading = ref(false);
+const dragOver = ref(false);
+const selectedFile = ref(null);
+const fileInputRef = ref(null);
+
+function openImportModal() {
+    selectedFile.value = null;
+    dragOver.value = false;
+    showImportModal.value = true;
+}
+function closeImportModal() {
+    if (importLoading.value) return;
+    showImportModal.value = false;
+    selectedFile.value = null;
+}
+
+/* SweetAlert toasts */
+const swalToast = Swal.mixin({
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true
+});
+
+function confirmDialog(title, text, { confirmText = 'Xác nhận', icon = 'warning' } = {}) {
+    return Swal.fire({
+        title,
+        text,
+        icon,
+        showCancelButton: true,
+        confirmButtonText: confirmText,
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: '#2563eb',
+        cancelButtonColor: '#64748b',
+        reverseButtons: true
+    });
+}
 
 function statusSeverity(row) {
     return row.statusKey === 'blocked' ? 'danger' : 'success';
@@ -65,8 +121,10 @@ function statusText(row) {
     return row.status || (row.statusKey === 'blocked' ? 'Đã khóa' : 'Hoạt động');
 }
 
-async function load() {
-    loading.value = true;
+/* =================== LOAD LIST =================== */
+async function load(isInit = false) {
+    if (isInit) loadingInit.value = true;
+    else loadingList.value = true;
     try {
         const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
         const {
@@ -83,11 +141,18 @@ async function load() {
         rows.value = items;
         totalRecords.value = total;
         counts.value = cts;
+    } catch (e) {
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Không tải được danh sách phụ huynh'
+        });
     } finally {
-        loading.value = false;
+        if (isInit) loadingInit.value = false;
+        else loadingList.value = false;
     }
 }
 
+/* sort & paginate & tabs */
 function onSort(field) {
     if (sortField.value === field) {
         sortOrder.value = sortOrder.value === 1 ? -1 : 1;
@@ -96,88 +161,276 @@ function onSort(field) {
         sortOrder.value = 1;
     }
     page.value = 1;
-    load();
+    load(false);
 }
 function onChangePage(e) {
     page.value = e.page + 1;
     size.value = e.rows;
-    load();
+    load(false);
 }
-
 function switchTab(k) {
     currentTab.value = k;
     page.value = 1;
-    load();
+    load(false);
 }
+
+/* =================== EXPORT =================== */
 async function onExport() {
-    await exportParentsExcel();
+    try {
+        await exportParentsExcel();
+        swalToast.fire({ icon: 'success', title: 'Đang tải file Excel' });
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Xuất Excel thất bại' });
+    }
 }
 
-/* Row actions */
-function onView() {
-    // mở trang chi tiết nếu bạn có route riêng
-    // this.$router.push({ name:'ParentDetail', params:{ id: activeRow.value.id }});
-}
-const showUpsert = ref(false);
-const editing = ref(null);
-function onCreate() {
-    editing.value = null;
-    showUpsert.value = true;
-}
-function onEdit() {
-    editing.value = activeRow.value;
-    showUpsert.value = true;
-}
-
-async function onAfterUpsert() {
-    showUpsert.value = false;
-    await load();
-}
-
+/* =================== ROW ACTIONS =================== */
 async function onLock() {
-    const ids = [activeRow.value?.id].filter(Boolean);
-    if (!ids.length) return;
-    await lockParents(ids);
-    await load();
-}
-async function onUnlock() {
-    const ids = [activeRow.value?.id].filter(Boolean);
-    if (!ids.length) return;
-    await unlockParents(ids);
-    await load();
-}
-async function onDelete() {
-    const ids = [activeRow.value?.id].filter(Boolean);
-    if (!ids.length) return;
-    await deleteParents(ids);
-    await load();
+    if (!activeRow.value?.id) return;
+    const { isConfirmed } = await confirmDialog('Khóa tài khoản phụ huynh?', `${activeRow.value.name} (${activeRow.value.phone || activeRow.value.email || '-'})`, { confirmText: 'Khóa' });
+    if (!isConfirmed) return;
+
+    try {
+        await lockParents([activeRow.value.id]);
+        swalToast.fire({ icon: 'success', title: 'Đã khóa tài khoản' });
+        await load(false);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Khóa tài khoản thất bại' });
+    }
 }
 
-/* Bulk */
+async function onUnlock() {
+    if (!activeRow.value?.id) return;
+    const { isConfirmed } = await confirmDialog('Mở khóa tài khoản phụ huynh?', `${activeRow.value.name} (${activeRow.value.phone || activeRow.value.email || '-'})`, { confirmText: 'Mở khóa' });
+    if (!isConfirmed) return;
+
+    try {
+        await unlockParents([activeRow.value.id]);
+        swalToast.fire({ icon: 'success', title: 'Đã mở khóa tài khoản' });
+        await load(false);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Mở khóa tài khoản thất bại' });
+    }
+}
+
+async function onDelete() {
+    if (!activeRow.value?.id) return;
+    const { isConfirmed } = await confirmDialog('Xóa phụ huynh?', `Bạn có chắc muốn xóa phụ huynh "${activeRow.value.name}"? Thao tác không thể hoàn tác.`, { confirmText: 'Xóa', icon: 'warning' });
+    if (!isConfirmed) return;
+
+    try {
+        await deleteParents([activeRow.value.id]);
+        swalToast.fire({ icon: 'success', title: 'Đã xóa phụ huynh' });
+        await load(false);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Xóa phụ huynh thất bại' });
+    }
+}
+
+/* =================== BULK ACTIONS =================== */
 async function doBulk(action) {
     const ids = selection.value.map((x) => x.id);
-    if (!ids.length) return;
-    if (action === 'lock') await lockParents(ids);
-    if (action === 'unlock') await unlockParents(ids);
-    if (action === 'delete') await deleteParents(ids);
-    selection.value = [];
-    await load();
+    if (!ids.length) {
+        swalToast.fire({ icon: 'info', title: 'Chưa chọn phụ huynh nào' });
+        return;
+    }
+
+    if (action === 'lock') {
+        const { isConfirmed } = await confirmDialog('Khóa tài khoản đã chọn?', `Sẽ khóa ${ids.length} phụ huynh.`, { confirmText: 'Khóa' });
+        if (!isConfirmed) return;
+        try {
+            await lockParents(ids);
+            swalToast.fire({ icon: 'success', title: 'Đã khóa tài khoản đã chọn' });
+            selection.value = [];
+            await load(false);
+        } catch (e) {
+            swalToast.fire({ icon: 'error', title: e?.message || 'Khóa tài khoản thất bại' });
+        }
+    } else if (action === 'unlock') {
+        const { isConfirmed } = await confirmDialog('Mở khóa tài khoản đã chọn?', `Sẽ mở khóa ${ids.length} phụ huynh.`, { confirmText: 'Mở khóa' });
+        if (!isConfirmed) return;
+        try {
+            await unlockParents(ids);
+            swalToast.fire({ icon: 'success', title: 'Đã mở khóa tài khoản đã chọn' });
+            selection.value = [];
+            await load(false);
+        } catch (e) {
+            swalToast.fire({ icon: 'error', title: e?.message || 'Mở khóa tài khoản thất bại' });
+        }
+    } else if (action === 'delete') {
+        const { isConfirmed } = await confirmDialog('Xóa phụ huynh đã chọn?', `Bạn có chắc muốn xóa ${ids.length} phụ huynh? Thao tác không thể hoàn tác.`, { confirmText: 'Xóa', icon: 'warning' });
+        if (!isConfirmed) return;
+        try {
+            await deleteParents(ids);
+            swalToast.fire({ icon: 'success', title: 'Đã xóa phụ huynh đã chọn' });
+            selection.value = [];
+            await load(false);
+        } catch (e) {
+            swalToast.fire({ icon: 'error', title: e?.message || 'Xóa phụ huynh thất bại' });
+        }
+    }
 }
 
-/* Debounce search */
+/* =================== ROW MENU MODEL =================== */
+const rowMenuModel = ref([
+    {
+        label: 'Xem chi tiết',
+        icon: 'fa-regular fa-eye',
+        tone: 'primary',
+        sub: 'Thông tin tài khoản & con đang học',
+        command: () => onView()
+    },
+    {
+        label: 'Sửa phụ huynh',
+        icon: 'fa-regular fa-pen-to-square',
+        tone: 'info',
+        sub: 'Chỉnh sửa tên, liên hệ, email...',
+        command: () => onEdit()
+    },
+    { separator: true },
+    {
+        label: 'Khóa tài khoản',
+        icon: 'fa-solid fa-lock',
+        tone: 'warn',
+        sub: 'Ngăn đăng nhập & sử dụng app',
+        command: () => onLock()
+    },
+    {
+        label: 'Mở khóa',
+        icon: 'fa-solid fa-unlock',
+        tone: 'primary',
+        sub: 'Cho phép đăng nhập trở lại',
+        command: () => onUnlock()
+    },
+    { separator: true },
+    {
+        label: 'Xóa phụ huynh',
+        icon: 'fa-regular fa-trash-can',
+        tone: 'danger',
+        sub: 'Không thể hoàn tác',
+        command: () => onDelete()
+    }
+]);
+
+/* =================== EXCEL TEMPLATE =================== */
+function downloadTemplateExcel() {
+    const headers = ['Họ và tên', 'Email', 'Số điện thoại', 'Giới tính', 'Ngày sinh', 'Nghề nghiệp', 'Mối quan hệ', 'Liên hệ khẩn cấp', 'Số điện thoại phụ'];
+
+    // sheet dùng để BE import (DuLieu)
+    const wsData = XLSX.utils.aoa_to_sheet([headers]);
+
+    // sheet ví dụ (chỉ để tham khảo, BE không đọc)
+    const exampleRow = ['Nguyễn Văn A', 'phuhuynhA@example.com', '0912345678', 'Nam', '01-01-1980', 'Kinh doanh', 'Ba', '0911222333', '0988777666'];
+    const wsExample = XLSX.utils.aoa_to_sheet([headers, exampleRow]);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsData, 'DuLieu');
+    XLSX.utils.book_append_sheet(wb, wsExample, 'Vi_du');
+
+    XLSX.writeFile(wb, 'Mau_import_phu_huynh.xlsx');
+}
+
+/* =================== DRAG & DROP / CHỌN FILE =================== */
+function onDrop(e) {
+    e.preventDefault();
+    dragOver.value = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (file) {
+        selectedFile.value = file;
+    }
+}
+function onDragOver(e) {
+    e.preventDefault();
+    dragOver.value = true;
+}
+function onDragLeave(e) {
+    e.preventDefault();
+    dragOver.value = false;
+}
+function chooseFile() {
+    fileInputRef.value?.click();
+}
+function onFileChange(e) {
+    const file = e.target.files?.[0];
+    if (file) {
+        selectedFile.value = file;
+    }
+}
+
+/* =================== UPLOAD EXCEL =================== */
+const requiredColsText = 'Họ và tên, Email, Số điện thoại, Giới tính, Ngày sinh, Nghề nghiệp, Mối quan hệ, Liên hệ khẩn cấp, Số điện thoại phụ';
+
+async function uploadExcel() {
+    if (!selectedFile.value) {
+        swalToast.fire({ icon: 'info', title: 'Vui lòng chọn file Excel trước' });
+        return;
+    }
+
+    importLoading.value = true;
+    try {
+        const res = await importParentsFromExcel(selectedFile.value);
+        const apiStatus = res?.status;
+        const apiMsg = res?.message || 'Kết quả import phụ huynh';
+        const result = res?.data || {};
+        const totalRecords = result.totalRecords ?? 0;
+        const successCount = result.successCount ?? 0;
+        const errorCount = result.errorCount ?? 0;
+        const errorMessages = Array.isArray(result.errorMessages) ? result.errorMessages : [];
+
+        let html = `
+            <div style="text-align:left;font-size:14px;">
+                <div><strong>Tổng bản ghi:</strong> ${totalRecords}</div>
+                <div><strong>Thành công:</strong> ${successCount}</div>
+                <div><strong>Lỗi:</strong> ${errorCount}</div>
+            </div>
+        `;
+
+        if (errorMessages.length) {
+            const topErrors = errorMessages.slice(0, 5).join('<br/>');
+            html += `
+                <hr/>
+                <div style="max-height:160px;overflow:auto;text-align:left;font-size:12px;color:#b91c1c;">
+                    <strong>Một số lỗi:</strong><br/>
+                    ${topErrors}
+                    ${errorMessages.length > 5 ? '<br/>...' : ''}
+                </div>
+            `;
+        }
+
+        await Swal.fire({
+            icon: apiStatus === 200 && successCount > 0 ? 'success' : 'warning',
+            title: apiMsg,
+            html
+        });
+
+        closeImportModal();
+        await load(false);
+    } catch (err) {
+        await Swal.fire({
+            icon: 'error',
+            title: 'Import phụ huynh thất bại',
+            text: err?.message || 'Đã xảy ra lỗi khi import'
+        });
+    } finally {
+        importLoading.value = false;
+        if (fileInputRef.value) fileInputRef.value.value = '';
+    }
+}
+
+/* =================== SEARCH DEBOUNCE =================== */
 let t;
 function debounce(fn, ms = 250) {
     clearTimeout(t);
     t = setTimeout(fn, ms);
 }
-watch([fSearch], () =>
+watch(fSearch, () =>
     debounce(() => {
         page.value = 1;
-        load();
+        load(false);
     }, 300)
 );
 
-onMounted(load);
+onMounted(() => load(true));
 </script>
 
 <template>
@@ -186,6 +439,7 @@ onMounted(load);
         <div class="flex flex-wrap items-center justify-between gap-3">
             <h1 class="text-xl font-semibold text-slate-800">Phụ huynh</h1>
             <div class="flex items-center gap-2">
+                <Button class="!bg-sky-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-up mr-2" :label="importLoading ? 'Đang import...' : 'Nhập Excel'" :disabled="importLoading" @click="openImportModal" />
                 <Button class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Xuất excel" @click="onExport" />
                 <Button class="!bg-primary !border-0 !text-white" icon="fa-solid fa-plus mr-2" label="Thêm phụ huynh" @click="onCreate" />
             </div>
@@ -198,8 +452,8 @@ onMounted(load);
             </button>
         </div>
 
-        <!-- Filters -->
-        <div class="flex flex-wrap items-center gap-3">
+        <!-- Filters + bulk -->
+        <div class="flex flex-wrap items-center gap-3 justify-between">
             <div class="flex-1 min-w-[240px]">
                 <InputText v-model="fSearch" class="w-full" placeholder="Tìm tên/SĐT/Email..." />
             </div>
@@ -211,16 +465,22 @@ onMounted(load);
         </div>
 
         <!-- Table -->
-        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white">
-            <DataTable :value="rows" v-model:selection="selection" dataKey="id" :loading="loading" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
+        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
+            <!-- loading overlay -->
+            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải danh sách phụ huynh...</div>
+
+            <DataTable :value="rows" v-model:selection="selection" dataKey="id" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
                 <Column selectionMode="multiple" headerStyle="width: 3rem" />
                 <Column header="#" :body="(_, opt) => opt.rowIndex + 1" headerStyle="width: 4rem" />
 
+                <!-- Họ tên + username -->
                 <Column>
                     <template #header>
                         <div class="header-filter">
                             <span class="font-semibold">Họ và tên</span>
-                            <button class="sort-btn" @click="onSort('name')" title="Sắp xếp theo tên"><i class="fa-solid fa-up-down"></i></button>
+                            <button class="sort-btn" @click="onSort('name')" title="Sắp xếp theo tên">
+                                <i class="fa-solid fa-up-down"></i>
+                            </button>
                         </div>
                     </template>
                     <template #body="{ data }">
@@ -229,6 +489,7 @@ onMounted(load);
                     </template>
                 </Column>
 
+                <!-- Liên hệ -->
                 <Column header="Liên hệ">
                     <template #body="{ data }">
                         <div class="text-slate-900"><i class="fa-solid fa-phone"></i> {{ data.phone || '-' }}</div>
@@ -236,6 +497,7 @@ onMounted(load);
                     </template>
                 </Column>
 
+                <!-- Con đang học -->
                 <Column header="Con đang học">
                     <template #body="{ data }">
                         <div class="flex flex-wrap gap-1">
@@ -247,28 +509,99 @@ onMounted(load);
                     </template>
                 </Column>
 
+                <!-- Trạng thái -->
                 <Column header="Trạng thái" headerStyle="width: 140px;">
                     <template #body="{ data }">
                         <Tag :severity="statusSeverity(data)">{{ statusText(data) }}</Tag>
                     </template>
                 </Column>
 
+                <!-- Hành động -->
                 <Column header="Hành động" headerStyle="width: 64px; text-align: right;" bodyStyle="text-align: right;">
                     <template #body="{ data }">
                         <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => openRowMenu(e, data)" />
                     </template>
                 </Column>
             </DataTable>
-
-            <div class="border-t border-slate-200">
-                <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[10, 20, 50]" @page="onChangePage" />
-            </div>
         </div>
 
-        <Menu ref="rowMenu" :model="rowMenuModel" :popup="true" appendTo="body" />
+        <!-- Pagination -->
+        <div class="border-t border-slate-200 mt-2 flex justify-end">
+            <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[10, 20, 50]" @page="onChangePage" />
+        </div>
 
+        <!-- Row menu -->
+        <Menu ref="rowMenu" :model="rowMenuModel" :popup="true" appendTo="body" :pt="{ menu: { class: 'rowmenu-panel' } }">
+            <template #item="{ item, props }">
+                <div v-if="item.separator" class="rowmenu-sep"></div>
+                <button
+                    v-else
+                    type="button"
+                    v-bind="props.action"
+                    class="menu-item"
+                    :class="{
+                        'menu-item--danger': item.tone === 'danger',
+                        'menu-item--warn': item.tone === 'warn',
+                        'menu-item--info': item.tone === 'info',
+                        'menu-item--primary': item.tone === 'primary'
+                    }"
+                    @click="item.command && item.command()"
+                >
+                    <span class="menu-item__icon">
+                        <i :class="item.icon"></i>
+                    </span>
+                    <div class="flex-1 min-w-0 text-left">
+                        <div class="menu-item__label truncate">{{ item.label }}</div>
+                        <div v-if="item.sub" class="menu-item__sub truncate">{{ item.sub }}</div>
+                    </div>
+                </button>
+            </template>
+        </Menu>
+
+        <!-- Modal thêm / sửa / xem phụ huynh -->
         <ParentUpsertModal v-model:modelValue="showUpsert" :parent="editing" @saved="onAfterUpsert" />
-        <ConfirmDialog />
+
+        <!-- ============ IMPORT EXCEL MODAL (NHƯ VIEW HỌC SINH) ============ -->
+        <Dialog v-model:visible="showImportModal" modal header="Nhập danh sách phụ huynh" :style="{ width: '650px', maxWidth: '95vw' }" :breakpoints="{ '960px': '90vw', '640px': '95vw' }">
+            <div class="space-y-4">
+                <!-- Khu vực kéo thả -->
+                <div class="import-dropzone" :class="{ 'import-dropzone--over': dragOver }" @drop="onDrop" @dragover="onDragOver" @dragleave="onDragLeave" @dragend="onDragLeave">
+                    <div class="import-dropzone__inner" @click="chooseFile">
+                        <div class="import-dropzone__icon">
+                            <i class="fa-solid fa-cloud-arrow-up fa-2x"></i>
+                        </div>
+                        <p class="import-dropzone__text">
+                            Kéo thả file Excel vào đây hoặc
+                            <span class="import-dropzone__link">chọn file từ hệ thống</span>
+                        </p>
+                        <p v-if="selectedFile" class="import-dropzone__filename">
+                            File đã chọn: <strong>{{ selectedFile.name }}</strong>
+                        </p>
+                        <p v-else class="import-dropzone__filename text-slate-400">Chưa có file nào được chọn</p>
+                    </div>
+                    <input ref="fileInputRef" type="file" accept=".xlsx,.xls" class="hidden" @change="onFileChange" />
+                </div>
+
+                <!-- Hướng dẫn cột -->
+                <div class="text-xs text-slate-600">
+                    <div class="font-semibold mb-1">Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):</div>
+                    <textarea class="w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50" rows="2" readonly>{{ requiredColsText }}</textarea>
+                    <div class="mt-1 text-[11px] text-slate-500">
+                        - Ngày sinh hỗ trợ các định dạng: <code>dd-MM-yyyy</code>, <code>dd/MM/yyyy</code>, <code>yyyy-MM-dd</code>.<br />
+                        - Sheet <strong>DuLieu</strong>: dữ liệu thật để import. Sheet <strong>Vi_du</strong> chỉ là ví dụ, không lưu vào DB.
+                    </div>
+                </div>
+
+                <!-- Buttons -->
+                <div class="flex justify-between items-center pt-2">
+                    <Button class="!bg-slate-200 !border-0 !text-slate-700 px-4" label="Đóng" @click="closeImportModal" :disabled="importLoading" />
+                    <div class="flex gap-2">
+                        <Button class="!bg-emerald-600 !border-0 !text-white px-4" icon="fa-solid fa-download mr-2" label="Tải mẫu Excel Import" @click="downloadTemplateExcel" :disabled="importLoading" />
+                        <Button class="!bg-primary !border-0 !text-white px-4" icon="fa-solid fa-cloud-arrow-up mr-2" :label="importLoading ? 'Đang tải lên...' : 'Tải lên'" :disabled="importLoading" @click="uploadExcel" />
+                    </div>
+                </div>
+            </div>
+        </Dialog>
     </div>
 </template>
 
@@ -296,6 +629,7 @@ onMounted(load);
     background: #fecaca;
 }
 
+/* Header filter */
 .header-filter {
     display: flex;
     align-items: center;
@@ -314,5 +648,120 @@ onMounted(load);
 }
 .sort-btn:hover {
     background: #f1f5f9;
+}
+
+/* Menu hành động */
+:deep(.rowmenu-panel) {
+    padding: 6px;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    box-shadow:
+        0 10px 15px -3px rgba(15, 23, 42, 0.15),
+        0 4px 6px -4px rgba(15, 23, 42, 0.1);
+    min-width: 240px;
+}
+.rowmenu-sep {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 6px 4px;
+}
+.menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
+.menu-item:hover {
+    background: #f8fafc;
+}
+.menu-item__icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #e5e7eb;
+    color: #0f172a;
+    flex-shrink: 0;
+}
+.menu-item--primary .menu-item__icon {
+    background: #eff6ff;
+    color: #2563eb;
+}
+.menu-item--info .menu-item__icon {
+    background: #ecfeff;
+    color: #0ea5e9;
+}
+.menu-item--warn .menu-item__icon {
+    background: #fffbeb;
+    color: #f59e0b;
+}
+.menu-item--danger .menu-item__icon {
+    background: #fef2f2;
+    color: #dc2626;
+}
+.menu-item__label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0f172a;
+}
+.menu-item__sub {
+    font-size: 12px;
+    color: #64748b;
+}
+
+/* Import modal styles (giống view học sinh) */
+.import-dropzone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 26px 18px;
+    text-align: center;
+    background: #f8fafc;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease;
+}
+.import-dropzone--over {
+    background: #e0f2fe;
+    border-color: #38bdf8;
+}
+.import-dropzone__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+.import-dropzone__icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    color: #0ea5e9;
+    border: 1px solid #bae6fd;
+    margin-bottom: 4px;
+}
+.import-dropzone__text {
+    font-size: 13px;
+    color: #0f172a;
+}
+.import-dropzone__link {
+    color: #2563eb;
+    text-decoration: underline;
+    margin-left: 4px;
+}
+.import-dropzone__filename {
+    font-size: 12px;
+    margin-top: 4px;
 }
 </style>

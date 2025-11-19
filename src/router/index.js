@@ -66,15 +66,16 @@ const router = createRouter({
                     component: () => import('@/views/school/FeedbackInbox.vue')
                 },
                 {
-                    path: 'school/menulist',
-                    name: 'menulist',
-                    component: () => import('@/views/school/MenuManagement.vue')
-                },
-                  {
                     path: 'school/healthrecord',
                     name: 'healthrecord',
                     component: () => import('@/views/school/HealthRecord.vue')
-                }
+                },
+                {
+                    path: 'school/leaveRequest',
+                    name: 'leaveRequest',
+                    component: () => import('@/views/school/LeaveRequests.vue')
+                },
+
             ]
         },
         {

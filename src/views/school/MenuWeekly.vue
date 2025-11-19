@@ -1,3 +1,4 @@
+<!-- src/pages/MenuPage.vue -->
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
@@ -12,14 +13,22 @@ import InputText from 'primevue/inputtext';
 import Swal from 'sweetalert2';
 
 import { fetchClassOptions } from '@/service/classService.js';
-import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu } from '@/service/menuService.js';
+import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu, fetchMenusByClass, deleteWeeklyMenu } from '@/service/menuService.js';
 
 /* ===== Tabs (Tạo thực đơn / Chi tiết thực đơn) ===== */
-// SỬA Ở ĐÂY: chỉ dùng ref('create'), KHÔNG dùng toán tử < | >
 const activeTab = ref('create'); // 'create' hoặc 'detail'
 function switchTab(tab) {
     activeTab.value = tab;
 }
+
+/* ===== SweetAlert toast dùng chung ===== */
+const swalToast = Swal.mixin({
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true
+});
 
 /* ===== Helpers ngày dùng chung ===== */
 function formatDate_ddMMyyyy(date) {
@@ -42,19 +51,6 @@ function formatDateDisplay(date) {
     if (!date) return '';
     const d = new Date(date);
     return d.toLocaleDateString('vi-VN');
-}
-function getMonday(date) {
-    if (!date) return null;
-    const d = new Date(date);
-    const dow = d.getDay(); // 0 sun
-    const diff = (dow === 0 ? -6 : 1) - dow;
-    d.setDate(d.getDate() + diff);
-    return d;
-}
-function addDays(date, n) {
-    const d = new Date(date);
-    d.setDate(d.getDate() + n);
-    return d;
 }
 
 /* ===== Lớp (dùng chung) ===== */
@@ -81,7 +77,7 @@ const dishOptions = computed(() =>
     }))
 );
 
-/* weekly menu */
+/* weekly menu cho tab tạo/sửa */
 const daysOfWeek = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 const mealTypes = ['Sáng', 'Trưa', 'Chiều'];
 
@@ -112,21 +108,151 @@ function applyMenuFromBackend(menu) {
 
 const currentMenuId = ref(null);
 
+/* Loading states */
 const loadingInit = ref(false);
-const loadingMenu = ref(false);
+const loadingWeekly = ref(false);
 const savingMenu = ref(false);
 
 /* Modal thêm món ăn */
 const showAddDishModal = ref(false);
 const newDishNamesText = ref('');
 
-/* Init chung: lớp + món ăn + weeklyMenu */
+/* ====== PHẦN 2: CHI TIẾT THỰC ĐƠN (LIST + DETAIL) ====== */
+const classFilterText = ref(''); // lọc theo tên khối/lớp
+
+const menuList = ref([]); // [{ id, classId, className, startDate, endDate, createdBy, raw }]
+const selectedMenu = ref(null);
+const detailMenu = ref(null); // MenuResponse của menu đang xem
+const detailLoading = ref(false);
+
+const detailDaysOfWeek = daysOfWeek;
+const detailMealTypes = ['Bữa sáng', 'Bữa trưa', 'Bữa chiều'];
+
+function getDishesBy(day, mealType) {
+    if (!detailMenu.value?.items) return [];
+    const mealKey = mealType.replace('Bữa ', '');
+    return detailMenu.value.items.filter((it) => it.dayOfWeek === day && (it.mealType === mealKey || it.mealType.toLowerCase() === mealKey.toLowerCase())).flatMap((it) => it.dishes || []);
+}
+
+/* Lọc theo tên khối/lớp client-side */
+const filteredMenuList = computed(() => {
+    if (!classFilterText.value) return menuList.value;
+    const q = classFilterText.value.toLowerCase().trim();
+    return menuList.value.filter((m) => (m.className || '').toLowerCase().includes(q));
+});
+
+/* Chọn 1 menu trong danh sách bên trái để xem chi tiết */
+function onSelectMenu(row) {
+    selectedMenu.value = row;
+    detailMenu.value = row.raw || null;
+}
+
+/* Xóa thực đơn đang chọn */
+async function onDeleteSelectedMenu() {
+    if (!detailMenu.value || !detailMenu.value.id) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Chưa chọn thực đơn',
+            text: 'Vui lòng chọn một thực đơn ở bên trái trước.'
+        });
+        return;
+    }
+
+    const { isConfirmed } = await Swal.fire({
+        icon: 'warning',
+        title: 'Xóa thực đơn?',
+        text: 'Thực đơn tuần này sẽ bị xóa khỏi hệ thống.',
+        showCancelButton: true,
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: '#dc2626',
+        heightAuto: false
+    });
+
+    if (!isConfirmed) return;
+
+    try {
+        await deleteWeeklyMenu(detailMenu.value.id);
+
+        // Xóa khỏi danh sách bên trái
+        const idx = menuList.value.findIndex((m) => m.id === detailMenu.value.id);
+        if (idx !== -1) {
+            menuList.value.splice(idx, 1);
+        }
+
+        // Chọn thực đơn mới (nếu còn) hoặc clear
+        if (menuList.value.length > 0) {
+            selectedMenu.value = menuList.value[0];
+            detailMenu.value = menuList.value[0].raw;
+        } else {
+            selectedMenu.value = null;
+            detailMenu.value = null;
+        }
+
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã xóa thực đơn tuần'
+        });
+    } catch (e) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Xóa thực đơn thất bại',
+            text: e?.message || 'Backend không cho phép xóa thực đơn (lỗi hệ thống).'
+        });
+    }
+}
+
+/* ===== INIT: load lớp, món ăn, tất cả thực đơn cho tab Chi tiết ===== */
+async function initAllMenus() {
+    // menuList sẽ chứa tất cả thực đơn của mọi lớp, không cần bấm Tìm
+    detailLoading.value = true;
+    try {
+        const all = [];
+
+        for (const cls of classOptions.value) {
+            const menus = await fetchMenusByClass(cls.value);
+            (menus || []).forEach((m) => {
+                all.push({
+                    id: m.id,
+                    classId: cls.value,
+                    className: m.className || cls.label,
+                    startDate: new Date(m.startDate),
+                    endDate: new Date(m.endDate),
+                    createdBy: m.createdBy,
+                    raw: m // lưu luôn MenuResponse để hiển thị chi tiết
+                });
+            });
+        }
+
+        // Sort: mới nhất trước
+        all.sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+        menuList.value = all;
+
+        // Nếu có thực đơn thì chọn cái đầu tiên
+        if (menuList.value.length > 0) {
+            selectedMenu.value = menuList.value[0];
+            detailMenu.value = menuList.value[0].raw;
+        }
+    } catch (e) {
+        console.warn('[MenuPage] initAllMenus error:', e);
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi tải danh sách thực đơn',
+            text: e?.message || 'Không tải được danh sách thực đơn của các lớp'
+        });
+    } finally {
+        detailLoading.value = false;
+    }
+}
+
+/* INIT chung cho cả page */
 async function init() {
     loadingInit.value = true;
     try {
-        classOptions.value = await fetchClassOptions();
+        classOptions.value = await fetchClassOptions(); // dùng chung cho tab tạo + tab chi tiết
         allDishes.value = await fetchAllMenuDishes();
         initEmptyWeeklyMenu();
+        await initAllMenus(); // tải toàn bộ thực đơn tất cả lớp 1 lần
     } catch (e) {
         Swal.fire({
             icon: 'error',
@@ -138,7 +264,7 @@ async function init() {
     }
 }
 
-/* Load 1 thực đơn tuần (Tạo/Sửa) */
+/* Load 1 thực đơn tuần vào tab Tạo/Sửa */
 async function onLoadWeeklyMenu() {
     if (!selectedClassId.value) {
         Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
@@ -152,7 +278,7 @@ async function onLoadWeeklyMenu() {
     const endDateEffective = endDate.value || autoEndDate.value || startDate.value;
     const endParam = formatDate_yyyyMMdd(endDateEffective);
 
-    loadingMenu.value = true;
+    loadingWeekly.value = true;
     try {
         const menu = await fetchWeeklyMenu({
             classId: selectedClassId.value,
@@ -171,7 +297,7 @@ async function onLoadWeeklyMenu() {
         }
         currentMenuId.value = menu.id;
         applyMenuFromBackend(menu);
-        Swal.fire({ icon: 'success', title: 'Đã tải thực đơn tuần' });
+        swalToast.fire({ icon: 'success', title: 'Đã tải thực đơn tuần' });
     } catch (e) {
         Swal.fire({
             icon: 'error',
@@ -179,11 +305,11 @@ async function onLoadWeeklyMenu() {
             text: e?.message || 'Đã có lỗi xảy ra'
         });
     } finally {
-        loadingMenu.value = false;
+        loadingWeekly.value = false;
     }
 }
 
-/* Lưu thực đơn tuần */
+/* Lưu thực đơn tuần (tạo mới hoặc cập nhật) */
 async function onSaveWeeklyMenu() {
     if (!selectedClassId.value) {
         Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
@@ -199,9 +325,9 @@ async function onSaveWeeklyMenu() {
 
     const payload = {
         classId: selectedClassId.value,
-        startDate: formatDate_ddMMyyyy(start),
+        startDate: formatDate_ddMMyyyy(start), // BE dùng @JsonFormat("dd/MM/yyyy")
         endDate: formatDate_ddMMyyyy(end),
-        createdBy: 'admin',
+        createdBy: 'admin', // sau này có thể dùng tên user login
         items: []
     };
 
@@ -230,11 +356,25 @@ async function onSaveWeeklyMenu() {
 
     savingMenu.value = true;
     try {
-        await createWeeklyMenu(payload);
-        Swal.fire({
-            icon: 'success',
-            title: 'Lưu thực đơn tuần thành công'
-        });
+        if (currentMenuId.value) {
+            // Nếu đã tồn tại menuId -> gọi API update
+            await updateWeeklyMenu(currentMenuId.value, payload);
+            swalToast.fire({
+                icon: 'success',
+                title: 'Cập nhật thực đơn tuần thành công'
+            });
+        } else {
+            // Chưa có -> tạo mới
+            const created = await createWeeklyMenu(payload);
+            currentMenuId.value = created?.id || null;
+            swalToast.fire({
+                icon: 'success',
+                title: 'Tạo thực đơn tuần thành công'
+            });
+        }
+
+        // Sau khi lưu, reload lại danh sách thực đơn bên tab Chi tiết
+        await initAllMenus();
     } catch (e) {
         Swal.fire({
             icon: 'error',
@@ -267,9 +407,9 @@ async function onSaveNewDishes() {
         newDishNamesText.value = '';
         showAddDishModal.value = false;
 
-        Swal.fire({
+        swalToast.fire({
             icon: 'success',
-            title: `Đã thêm ${created.length} món ăn mới`
+            title: `Đã thêm ${created.length || names.length} món ăn mới`
         });
     } catch (e) {
         Swal.fire({
@@ -278,120 +418,6 @@ async function onSaveNewDishes() {
             text: e?.message || 'Đã có lỗi xảy ra'
         });
     }
-}
-
-/* ====== PHẦN 2: CHI TIẾT THỰC ĐƠN (LIST + DETAIL) ====== */
-const filterFrom = ref(null);
-const filterTo = ref(null);
-const classFilterText = ref('');
-
-/**
- * menuList: các thực đơn đã load
- */
-const menuList = ref([]);
-const selectedMenu = ref(null);
-
-const detailMenu = ref(null); // MenuResponse
-const detailLoading = ref(false);
-
-const detailDaysOfWeek = daysOfWeek;
-const detailMealTypes = ['Bữa sáng', 'Bữa trưa', 'Bữa chiều'];
-
-function getDishesBy(day, mealType) {
-    if (!detailMenu.value?.items) return [];
-    const mealKey = mealType.replace('Bữa ', '');
-    return detailMenu.value.items.filter((it) => it.dayOfWeek === day && (it.mealType === mealKey || it.mealType.toLowerCase() === mealKey.toLowerCase())).flatMap((it) => it.dishes || []);
-}
-
-const filteredMenuList = computed(() => {
-    if (!classFilterText.value) return menuList.value;
-    const q = classFilterText.value.toLowerCase().trim();
-    return menuList.value.filter((m) => m.className.toLowerCase().includes(q));
-});
-
-/* Load 1 menu tuần vào list + detail */
-async function loadMenus() {
-    if (!filterFrom.value || !filterTo.value) {
-        Swal.fire({
-            icon: 'warning',
-            title: 'Vui lòng chọn Từ ngày và Đến ngày'
-        });
-        return;
-    }
-
-    const monday = getMonday(filterFrom.value);
-    const sunday = addDays(monday, 6);
-    const startParam = formatDate_yyyyMMdd(monday);
-    const endParam = formatDate_yyyyMMdd(sunday);
-
-    if (!classOptions.value.length) {
-        Swal.fire({
-            icon: 'warning',
-            title: 'Chưa có dữ liệu lớp trong hệ thống'
-        });
-        return;
-    }
-
-    const { value: classId } = await Swal.fire({
-        title: 'Chọn khối/lớp muốn xem thực đơn',
-        input: 'select',
-        inputOptions: classOptions.value.reduce((obj, c) => {
-            obj[c.value] = c.label;
-            return obj;
-        }, {}),
-        inputPlaceholder: 'Chọn khối',
-        showCancelButton: true,
-        confirmButtonText: 'Xem thực đơn',
-        cancelButtonText: 'Hủy',
-        heightAuto: false
-    });
-
-    if (!classId) return;
-
-    detailLoading.value = true;
-    try {
-        const menu = await fetchWeeklyMenu({
-            classId,
-            startDate: startParam,
-            endDate: endParam
-        });
-
-        if (!menu) {
-            Swal.fire({
-                icon: 'info',
-                title: 'Không có thực đơn tuần',
-                text: 'Chưa có thực đơn trong tuần này cho khối đã chọn.'
-            });
-            return;
-        }
-
-        const exists = menuList.value.some((m) => m.id === menu.id && m.className === menu.className);
-        if (!exists) {
-            menuList.value.push({
-                id: menu.id,
-                classId,
-                className: menu.className,
-                startDate: new Date(menu.startDate),
-                endDate: new Date(menu.endDate),
-                createdBy: menu.createdBy
-            });
-        }
-
-        selectedMenu.value = menuList.value.find((m) => m.id === menu.id) || menuList.value.at(-1);
-        detailMenu.value = menu;
-    } catch (e) {
-        Swal.fire({
-            icon: 'error',
-            title: 'Lỗi khi tải thực đơn',
-            text: e?.message || 'Đã có lỗi xảy ra'
-        });
-    } finally {
-        detailLoading.value = false;
-    }
-}
-
-function onSelectMenu(row) {
-    selectedMenu.value = row;
 }
 
 onMounted(init);
@@ -406,7 +432,13 @@ onMounted(init);
         </div>
 
         <!-- TAB TẠO THỰC ĐƠN -->
-        <div v-show="activeTab === 'create'" class="px-4 md:px-6 lg:px-8 py-5 space-y-4">
+        <div v-show="activeTab === 'create'" class="px-4 md:px-6 lg:px-8 py-5 space-y-4 relative">
+            <!-- Loading overlay -->
+            <div v-if="loadingInit || loadingWeekly" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
+                <i class="fa-solid fa-spinner fa-spin mr-2"></i>
+                Đang tải dữ liệu thực đơn...
+            </div>
+
             <h1 class="text-xl font-semibold text-slate-800">Thực đơn tuần</h1>
 
             <!-- Bộ lọc lớp + tuần -->
@@ -427,7 +459,7 @@ onMounted(init);
                     <Calendar v-model="endDate" dateFormat="dd/mm/yy" class="w-full" showIcon />
                 </div>
                 <div class="flex gap-2 justify-end">
-                    <Button class="!bg-slate-200 !border-0 !text-slate-800" :label="loadingMenu ? 'Đang tải...' : 'Tải thực đơn'" :disabled="loadingMenu || loadingInit" @click="onLoadWeeklyMenu" />
+                    <Button class="!bg-slate-200 !border-0 !text-slate-800" :label="loadingWeekly ? 'Đang tải...' : 'Tải thực đơn'" :disabled="loadingWeekly || loadingInit" @click="onLoadWeeklyMenu" />
                     <Button class="!bg-primary !border-0 !text-white" :label="savingMenu ? 'Đang lưu...' : 'Lưu thực đơn tuần'" :disabled="savingMenu || loadingInit" @click="onSaveWeeklyMenu" />
                 </div>
             </div>
@@ -515,15 +547,11 @@ onMounted(init);
                 <!-- Left -->
                 <div class="menu-left">
                     <h2 class="section-title">Danh sách thực đơn</h2>
-                    <div class="filters-row">
-                        <Calendar v-model="filterFrom" dateFormat="dd/mm/yy" placeholder="Từ ngày" showIcon class="w-full" />
-                        <Calendar v-model="filterTo" dateFormat="dd/mm/yy" placeholder="Đến ngày" showIcon class="w-full" />
-                        <Button class="btn-search" icon="fa-solid fa-magnifying-glass mr-2" label="Tìm" @click="loadMenus" />
-                    </div>
 
+                    <!-- Lọc theo tên khối/lớp -->
                     <div class="class-filter">
-                        <label class="filter-label">Khối</label>
-                        <InputText v-model="classFilterText" placeholder="Lọc theo tên khối" class="w-full" />
+                        <label class="filter-label">Khối / Lớp</label>
+                        <InputText v-model="classFilterText" placeholder="Lọc theo tên khối / lớp" class="w-full" />
                     </div>
 
                     <div class="menu-table-wrapper">
@@ -531,7 +559,7 @@ onMounted(init);
                             <thead>
                                 <tr>
                                     <th style="width: 40px">STT</th>
-                                    <th>Khối</th>
+                                    <th>Khối/Lớp</th>
                                     <th>Từ ngày</th>
                                     <th>Đến ngày</th>
                                 </tr>
@@ -544,14 +572,14 @@ onMounted(init);
                                     <td>{{ formatDateDisplay(row.endDate) }}</td>
                                 </tr>
                                 <tr v-if="!filteredMenuList.length">
-                                    <td colspan="4" class="empty-row">Chưa có thực đơn nào trong khoảng tìm kiếm.</td>
+                                    <td colspan="4" class="empty-row">Chưa có thực đơn nào trong hệ thống.</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
                     <div class="menu-pagination">
-                        <span>Total {{ filteredMenuList.length }}</span>
+                        <span>Tổng: {{ filteredMenuList.length }}</span>
                     </div>
                 </div>
 
@@ -559,7 +587,10 @@ onMounted(init);
                 <div class="menu-right">
                     <div class="detail-header-row">
                         <h2 class="section-title">Thông tin chi tiết của thực đơn</h2>
-                        <Button class="btn-download" icon="fa-solid fa-download mr-2" label="Tải về" :disabled="!detailMenu" />
+                        <div class="flex gap-2">
+                            <Button class="!bg-rose-500 !border-0 !text-white" icon="fa-solid fa-trash-can mr-2" label="Xóa thực đơn" :disabled="!detailMenu" @click="onDeleteSelectedMenu" />
+                            <Button class="btn-download" icon="fa-solid fa-download mr-2" label="Tải về" :disabled="!detailMenu" />
+                        </div>
                     </div>
 
                     <div v-if="detailLoading" class="detail-loading">Đang tải chi tiết thực đơn...</div>
@@ -567,7 +598,7 @@ onMounted(init);
                     <div v-else-if="detailMenu" class="detail-container">
                         <div class="detail-meta">
                             <div>
-                                <span class="meta-label">Khối:</span>
+                                <span class="meta-label">Khối/Lớp:</span>
                                 <b>{{ detailMenu.className }}</b>
                             </div>
                             <div>
@@ -613,7 +644,7 @@ onMounted(init);
                         </div>
                     </div>
 
-                    <div v-else class="detail-empty">Chọn một thực đơn bên trái hoặc bấm "Tìm" để xem chi tiết.</div>
+                    <div v-else class="detail-empty">Chọn một thực đơn bên trái để xem chi tiết.</div>
                 </div>
             </div>
         </div>
@@ -692,19 +723,7 @@ onMounted(init);
     color: #111827;
 }
 
-/* Filters left */
-.filters-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-    gap: 8px;
-    align-items: center;
-}
-.btn-search {
-    background: #2563eb !important;
-    border: 0 !important;
-    color: #ffffff !important;
-    height: 40px;
-}
+/* Left table */
 .class-filter {
     margin-top: 4px;
 }
@@ -713,8 +732,6 @@ onMounted(init);
     color: #6b7280;
     margin-bottom: 4px;
 }
-
-/* Table left */
 .menu-table-wrapper {
     margin-top: 6px;
     border-radius: 12px;

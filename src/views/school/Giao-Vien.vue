@@ -11,15 +11,47 @@ import Menu from 'primevue/menu';
 import Paginator from 'primevue/paginator';
 import Dialog from 'primevue/dialog';
 import { useToast } from 'primevue/usetoast';
+import Swal from 'sweetalert2';
 
-import { fetchTeachers, exportTeachersExcel, importTeachersExcel, fetchTeacherById, updateTeacher, toggleTeacherStatus } from '@/service/teacherService.js';
+import {
+    fetchTeachers,
+    exportTeachersExcel,
+    importTeachersExcel,
+    fetchTeacherById,
+    updateTeacher,
+    toggleTeacherStatus
+} from '@/service/teacherService.js';
 import CreateStaffModal from '@/components/staff/CreateStaffModal.vue';
 
 const toast = useToast();
 
+/* SweetAlert2 toast */
+const swalToast = Swal.mixin({
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true
+});
+
+function showSuccess(message) {
+    toast.add({ severity: 'success', summary: 'Thành công', detail: message, life: 2500 });
+}
+function showError(err, fallback) {
+    const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        fallback ||
+        'Có lỗi xảy ra';
+    toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+}
+
 const showCreate = ref(false);
 
-const loading = ref(false);
+/* loadingInit & loadingList */
+const loadingInit = ref(false);
+const loadingList = ref(false);
 const rows = ref([]);
 const totalRecords = ref(0);
 
@@ -70,10 +102,28 @@ const editForm = ref({
 
 /* action menu items */
 const actionItems = ref([
-    { label: 'Xem thông tin', icon: 'fa-regular fa-eye', command: () => onAction('view') },
-    { label: 'Sửa giáo viên', icon: 'fa-regular fa-pen-to-square', command: () => onAction('edit') },
+    {
+        label: 'Xem thông tin',
+        icon: 'fa-regular fa-eye',
+        tone: 'primary',
+        sub: 'Thông tin chi tiết giáo viên',
+        command: () => onAction('view')
+    },
+    {
+        label: 'Sửa giáo viên',
+        icon: 'fa-regular fa-pen-to-square',
+        tone: 'info',
+        sub: 'Chỉnh sửa hồ sơ, liên hệ...',
+        command: () => onAction('edit')
+    },
     { separator: true },
-    { label: 'Khóa / mở khóa tài khoản', icon: 'fa-solid fa-lock', command: () => onAction('lock') }
+    {
+        label: 'Khóa / mở khóa tài khoản',
+        icon: 'fa-solid fa-lock',
+        tone: 'danger',
+        sub: 'Yêu cầu xác nhận',
+        command: () => onAction('lock')
+    }
 ]);
 
 async function onAction(type) {
@@ -100,14 +150,41 @@ async function onAction(type) {
             };
             showEdit.value = true;
         } else if (type === 'lock') {
-            await toggleTeacherStatus(row.id);
-            toast.add({ severity: 'success', summary: 'Thành công', detail: 'Đã cập nhật trạng thái tài khoản', life: 2500 });
-            await load();
+            await confirmToggleLock(row);
         }
     } catch (e) {
         console.error(e);
-        const msg = e?.response?.data?.message || e?.message || 'Có lỗi xảy ra';
-        toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+        showError(e, 'Có lỗi xảy ra');
+    }
+}
+
+/* SweetAlert confirm cho khóa/mở khóa */
+async function confirmToggleLock(row) {
+    const locking = row.status === 'active';
+    const result = await Swal.fire({
+        title: locking ? 'Khóa tài khoản giáo viên?' : 'Mở khóa tài khoản giáo viên?',
+        text: `${row.name || ''} (${row.email || row.phone || 'không có liên hệ'})`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: locking ? 'Khóa' : 'Mở khóa',
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: locking ? '#dc2626' : '#16a34a'
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+        await toggleTeacherStatus(row.id);
+        swalToast.fire({
+            icon: 'success',
+            title: locking ? 'Đã khóa tài khoản' : 'Đã mở khóa tài khoản'
+        });
+        await load(false);
+    } catch (e) {
+        console.error(e);
+        swalToast.fire({
+            icon: 'error',
+            title: e?.response?.data?.message || e?.message || 'Cập nhật trạng thái thất bại'
+        });
     }
 }
 
@@ -116,13 +193,12 @@ async function saveEdit() {
     if (!currentTeacher.value) return;
     try {
         await updateTeacher(currentTeacher.value.id, editForm.value);
-        toast.add({ severity: 'success', summary: 'Thành công', detail: 'Cập nhật giáo viên thành công', life: 2500 });
+        showSuccess('Cập nhật giáo viên thành công');
         showEdit.value = false;
-        await load();
+        await load(false);
     } catch (e) {
         console.error(e);
-        const msg = e?.response?.data?.message || e?.message || 'Có lỗi xảy ra khi cập nhật';
-        toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+        showError(e, 'Có lỗi xảy ra khi cập nhật');
     }
 }
 
@@ -167,11 +243,23 @@ function triggerImport() {
 async function onImportChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    await importTeachersExcel(file);
-    await load();
+    try {
+        await importTeachersExcel(file);
+        swalToast.fire({ icon: 'success', title: 'Đã nhập danh sách giáo viên' });
+        await load(false);
+    } catch (e2) {
+        swalToast.fire({ icon: 'error', title: e2?.response?.data?.message || e2?.message || 'Nhập excel thất bại' });
+    } finally {
+        if (fileInput.value) fileInput.value.value = '';
+    }
 }
 async function onExport() {
-    await exportTeachersExcel();
+    try {
+        await exportTeachersExcel();
+        swalToast.fire({ icon: 'success', title: 'Đang tải file Excel' });
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.response?.data?.message || e?.message || 'Xuất Excel thất bại' });
+    }
 }
 
 /* debounce */
@@ -182,10 +270,12 @@ function debounce(fn, ms = 250) {
 }
 
 /* load */
-async function load() {
-    loading.value = true;
+async function load(isInit = false) {
+    if (isInit) loadingInit.value = true;
+    else loadingList.value = true;
     try {
         const q = [fName.value, fPhone.value].filter(Boolean).join(' ');
+
         const all = await fetchTeachers({ page: 1, size: 9999 });
         allData.value = all.items;
 
@@ -200,13 +290,14 @@ async function load() {
         rows.value = items;
         totalRecords.value = total;
     } finally {
-        loading.value = false;
+        if (isInit) loadingInit.value = false;
+        else loadingList.value = false;
     }
 }
 function onChangePage(e) {
     page.value = e.page + 1;
     size.value = e.rows;
-    load();
+    load(false);
 }
 function onSort(field) {
     if (sortField.value === field) sortOrder.value = sortOrder.value === 1 ? -1 : 1;
@@ -214,27 +305,27 @@ function onSort(field) {
         sortField.value = field;
         sortOrder.value = 1;
     }
-    load();
+    load(false);
 }
 function setStatusFilter(s) {
     statusFilter.value = s;
     page.value = 1;
-    load();
+    load(false);
 }
 
 /* after create -> reload */
 function onStaffCreated() {
     showCreate.value = false;
-    load();
+    load(false);
 }
 
 watch([fName, fPhone], () =>
     debounce(() => {
         page.value = 1;
-        load();
+        load(false);
     }, 300)
 );
-onMounted(load);
+onMounted(() => load(true));
 </script>
 
 <template>
@@ -264,8 +355,13 @@ onMounted(load);
             </div>
         </div>
 
-        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white">
-            <DataTable :value="rows" dataKey="id" v-model:selection="selection" :loading="loading" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm staff-table">
+        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
+            <!-- loading overlay -->
+            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
+                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải danh sách giáo viên...
+            </div>
+
+            <DataTable :value="rows" dataKey="id" v-model:selection="selection" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm staff-table">
                 <Column selectionMode="multiple" headerStyle="width: 3rem" />
                 <Column header="#" :body="(_, opt) => opt.rowIndex + 1" headerStyle="width: 4rem" />
 
@@ -360,7 +456,13 @@ onMounted(load);
                 <!-- Hành động -->
                 <Column header="Hành động" headerClass="th-nowrap" headerStyle="width: 6rem; text-align: right;" bodyStyle="text-align: right;">
                     <template #body="{ data }">
-                        <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => openRowMenu(e, data)" aria-haspopup="true" aria-controls="row_actions_menu" />
+                        <Button
+                            icon="fa-solid fa-ellipsis-vertical"
+                            class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100"
+                            @click="(e) => openRowMenu(e, data)"
+                            aria-haspopup="true"
+                            aria-controls="row_actions_menu"
+                        />
                     </template>
                 </Column>
             </DataTable>
@@ -370,15 +472,30 @@ onMounted(load);
             </div>
         </div>
 
-        <Menu ref="actionMenu" id="row_actions_menu" :model="actionItems" :popup="true" class="action-menu">
-            <template #item="{ item }">
-                <button type="button" class="action-menu-item" @click="item.command && item.command()">
-                    <span class="action-menu-icon-wrapper">
+        <!-- Menu hành động -->
+        <Menu ref="actionMenu" id="row_actions_menu" :model="actionItems" :popup="true" appendTo="body" :pt="{ menu: { class: 'rowmenu-panel' } }">
+            <template #item="{ item, props }">
+                <div v-if="item.separator" class="rowmenu-sep"></div>
+                <button
+                    v-else
+                    type="button"
+                    v-bind="props.action"
+                    class="menu-item"
+                    :class="{
+                        'menu-item--danger': item.tone === 'danger',
+                        'menu-item--warn': item.tone === 'warn',
+                        'menu-item--info': item.tone === 'info',
+                        'menu-item--primary': item.tone === 'primary'
+                    }"
+                    @click="item.command && item.command()"
+                >
+                    <span class="menu-item__icon">
                         <i :class="item.icon"></i>
                     </span>
-                    <span class="action-menu-label">
-                        {{ item.label }}
-                    </span>
+                    <div class="flex-1 min-w-0 text-left">
+                        <div class="menu-item__label truncate">{{ item.label }}</div>
+                        <div v-if="item.sub" class="menu-item__sub truncate">{{ item.sub }}</div>
+                    </div>
                 </button>
             </template>
         </Menu>
@@ -632,43 +749,71 @@ onMounted(load);
 :deep(.p-datatable .p-datatable-thead > tr > th) {
     background: #fff;
 }
-/* Menu hành động giống Học sinh */
-.action-menu :deep(.p-menu-list) {
-  padding: 4px 0;
-}
 
-.action-menu-item {
-  width: 100%;
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  background: transparent;
-  color: #0f172a;
-  font-size: 14px;
-  cursor: pointer;
+/* Menu hành động */
+:deep(.rowmenu-panel) {
+    padding: 6px;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    box-shadow:
+        0 10px 15px -3px rgba(15, 23, 42, 0.15),
+        0 4px 6px -4px rgba(15, 23, 42, 0.1);
+    min-width: 240px;
 }
-
-.action-menu-item:hover {
-  background-color: #f1f5f9;
+.rowmenu-sep {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 6px 4px;
 }
-
-.action-menu-icon-wrapper {
-  width: 22px;
-  height: 22px;
-  border-radius: 9999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #e5e7eb;
-  color: #0f172a;
-  flex-shrink: 0;
+.menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
 }
-
-.action-menu-label {
-  flex: 1;
-  text-align: left;
-  white-space: nowrap;
+.menu-item:hover {
+    background: #f8fafc;
+}
+.menu-item__icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #e5e7eb;
+    color: #0f172a;
+    flex-shrink: 0;
+}
+.menu-item--primary .menu-item__icon {
+    background: #eff6ff;
+    color: #2563eb;
+}
+.menu-item--info .menu-item__icon {
+    background: #ecfeff;
+    color: #0ea5e9;
+}
+.menu-item--warn .menu-item__icon {
+    background: #fffbeb;
+    color: #f59e0b;
+}
+.menu-item--danger .menu-item__icon {
+    background: #fef2f2;
+    color: #dc2626;
+}
+.menu-item__label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0f172a;
+}
+.menu-item__sub {
+    font-size: 12px;
+    color: #64748b;
 }
 </style>

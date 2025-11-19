@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 
 import Dropdown from 'primevue/dropdown';
@@ -10,6 +10,8 @@ import Card from 'primevue/card';
 import Paginator from 'primevue/paginator';
 import Dialog from 'primevue/dialog';
 
+import Swal from 'sweetalert2';
+
 import { fetchFeedbacks, updateFeedbackStatus, deleteFeedback } from '@/service/feedback.js';
 import { fetchClassOptions } from '@/service/classService.js';
 
@@ -18,7 +20,8 @@ import { fetchClassOptions } from '@/service/classService.js';
 // danh sách lớp, sẽ load từ BE
 const classes = ref([]);
 
-const feedbacks = ref([]); // list góp ý từ BE
+// góp ý từ BE
+const feedbacks = ref([]);
 
 const keywordParent = ref('');
 const keywordStudent = ref('');
@@ -29,7 +32,12 @@ const statusFilter = ref(null);
 const first = ref(0);
 const rows = ref(10);
 
-const loading = ref(false);
+/** loadingInit: khởi tạo (load lớp + góp ý lần đầu)
+ *  loadingList: khi reload danh sách góp ý
+ */
+const loadingInit = ref(false);
+const loadingList = ref(false);
+
 const errorMessage = ref('');
 
 // Dialog chi tiết
@@ -48,25 +56,48 @@ const statusView = {
     NEW: { text: 'Mới gửi', class: 'bg-amber-500 text-white' },
     PROCESSING: { text: 'Đang xử lý', class: 'bg-blue-600 text-white' },
     CLOSED: { text: 'Đã đóng', class: 'bg-slate-500 text-white' },
-    PENDING: { text: 'Chờ xử lý', class: 'bg-amber-500 text-white' } // phòng trường hợp BE default "PENDING"
+    PENDING: { text: 'Chờ xử lý', class: 'bg-amber-500 text-white' } // fallback nếu BE trả PENDING
 };
+
+/* ===== SweetAlert2 toast + helper ===== */
+const swalToast = Swal.mixin({
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true
+});
+
+function confirmDialog(title, text) {
+    return Swal.fire({
+        title,
+        text,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Xác nhận',
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: '#2563eb',
+        cancelButtonColor: '#64748b',
+        reverseButtons: true
+    });
+}
 
 /* ========== COMPUTED ========== */
 
 const filteredFeedbacks = computed(() => {
     let list = [...feedbacks.value];
 
-    // Lọc theo lớp (client-side, vì BE trả studentId/classId)
+    // Lọc theo lớp
     if (selectedClass.value?.id) {
         list = list.filter((f) => f.classId === selectedClass.value.id);
     }
 
-    // Lọc theo status (client-side)
+    // Lọc theo status
     if (statusFilter.value) {
         list = list.filter((f) => f.status === statusFilter.value);
     }
 
-    // Lọc theo ngày góp ý (dựa vào messageDate hoặc createdAt)
+    // Lọc theo ngày gửi (messageDate / createdAt)
     if (dateFilter.value) {
         const filterDay = new Date(dateFilter.value).setHours(0, 0, 0, 0);
         list = list.filter((f) => {
@@ -118,9 +149,9 @@ function formatDate(value) {
 }
 
 /**
- * Lấy chuỗi thời gian hiển thị:
- * - Ưu tiên dùng messageTime từ BE nếu có
- * - Nếu không có thì format từ messageDate/createdAt
+ * Chuỗi thời gian hiển thị:
+ * - Ưu tiên messageTime nếu có
+ * - nếu không có thì format từ messageDate/createdAt
  */
 function displayTime(feedback) {
     if (feedback.messageTime) return feedback.messageTime;
@@ -129,7 +160,7 @@ function displayTime(feedback) {
 }
 
 /**
- * Lấy ngày hiển thị:
+ * Ngày hiển thị:
  * - Ưu tiên messageDate
  * - fallback createdAt
  */
@@ -141,17 +172,21 @@ function displayDate(feedback) {
 /**
  * Load danh sách góp ý từ BE
  */
-async function loadFeedbacks() {
-    loading.value = true;
+async function loadFeedbacks({ showErrorToast = false } = {}) {
+    loadingList.value = true;
     errorMessage.value = '';
     try {
-        const data = await fetchFeedbacks(); // có thể dùng param nếu muốn filter server-side
+        const data = await fetchFeedbacks();
         feedbacks.value = data || [];
     } catch (e) {
         console.error(e);
-        errorMessage.value = e.message || 'Có lỗi xảy ra khi tải danh sách góp ý';
+        const msg = e.message || 'Có lỗi xảy ra khi tải danh sách góp ý';
+        errorMessage.value = msg;
+        if (showErrorToast) {
+            swalToast.fire({ icon: 'error', title: msg });
+        }
     } finally {
-        loading.value = false;
+        loadingList.value = false;
     }
 }
 
@@ -176,6 +211,18 @@ async function loadClasses() {
 }
 
 /**
+ * Init – dùng loadingInit kiểu như view Menu
+ */
+async function init() {
+    loadingInit.value = true;
+    try {
+        await Promise.all([loadClasses(), loadFeedbacks()]);
+    } finally {
+        loadingInit.value = false;
+    }
+}
+
+/**
  * Đổi trạng thái góp ý:
  * NEW -> PROCESSING -> CLOSED -> PROCESSING...
  */
@@ -184,10 +231,22 @@ async function changeStatus(item, newStatus) {
     item.status = newStatus; // Optimistic UI
     try {
         await updateFeedbackStatus(item.id, newStatus);
+        swalToast.fire({
+            icon: 'success',
+            title:
+                newStatus === 'PROCESSING'
+                    ? 'Đã nhận xử lý góp ý'
+                    : newStatus === 'CLOSED'
+                      ? 'Đã đánh dấu góp ý hoàn thành'
+                      : 'Đã cập nhật trạng thái góp ý'
+        });
     } catch (e) {
         item.status = oldStatus; // rollback
         console.error(e);
-        alert(e.message || 'Không thể cập nhật trạng thái góp ý');
+        swalToast.fire({
+            icon: 'error',
+            title: e.message || 'Không thể cập nhật trạng thái góp ý'
+        });
     }
 }
 
@@ -195,14 +254,25 @@ async function changeStatus(item, newStatus) {
  * Xóa 1 góp ý
  */
 async function removeFeedback(item) {
-    const ok = window.confirm('Bạn có chắc chắn muốn xóa góp ý này?');
-    if (!ok) return;
+    const { isConfirmed } = await confirmDialog(
+        'Xóa góp ý?',
+        `Bạn có chắc chắn muốn xóa góp ý của phụ huynh "${item.parentName || ''}"? Thao tác không thể hoàn tác.`
+    );
+    if (!isConfirmed) return;
+
     try {
         await deleteFeedback(item.id);
         feedbacks.value = feedbacks.value.filter((f) => f.id !== item.id);
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã xóa góp ý'
+        });
     } catch (e) {
         console.error(e);
-        alert(e.message || 'Không thể xóa góp ý');
+        swalToast.fire({
+            icon: 'error',
+            title: e.message || 'Không thể xóa góp ý'
+        });
     }
 }
 
@@ -219,10 +289,7 @@ function closeDetail() {
     detailItem.value = null;
 }
 
-onMounted(() => {
-    loadClasses();
-    loadFeedbacks();
-});
+onMounted(init);
 </script>
 
 <template>
@@ -233,12 +300,14 @@ onMounted(() => {
                 <i class="fa-solid fa-inbox text-2xl text-primary"></i>
                 <div>
                     <div class="text-2xl font-extrabold tracking-tight text-slate-800">Hòm thư góp ý</div>
-                    <div class="text-slate-500 text-sm">Ghi nhận ý kiến của phụ huynh, phản hồi kịp thời, minh bạch theo từng lớp</div>
+                    <div class="text-slate-500 text-sm">
+                        Ghi nhận ý kiến của phụ huynh, phản hồi kịp thời, minh bạch theo từng lớp
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Thông báo error -->
+        <!-- Thông báo error (text) -->
         <div v-if="errorMessage" class="px-4 py-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200">
             {{ errorMessage }}
         </div>
@@ -257,15 +326,33 @@ onMounted(() => {
                     </div>
                     <div>
                         <label class="label">Lớp học</label>
-                        <Dropdown v-model="selectedClass" :options="classes" optionLabel="name" class="w-full" placeholder="Tất cả lớp" />
+                        <Dropdown
+                            v-model="selectedClass"
+                            :options="classes"
+                            optionLabel="name"
+                            class="w-full"
+                            placeholder="Tất cả lớp"
+                        />
                     </div>
                     <div>
                         <label class="label">Ngày góp ý</label>
-                        <Calendar v-model="dateFilter" :manualInput="false" showIcon dateFormat="dd/mm/yy" class="w-full" />
+                        <Calendar
+                            v-model="dateFilter"
+                            :manualInput="false"
+                            showIcon
+                            dateFormat="dd/mm/yy"
+                            class="w-full"
+                        />
                     </div>
                     <div>
                         <label class="label">Trạng thái</label>
-                        <Dropdown v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" class="w-full" />
+                        <Dropdown
+                            v-model="statusFilter"
+                            :options="statusOptions"
+                            optionLabel="label"
+                            optionValue="value"
+                            class="w-full"
+                        />
                     </div>
                 </div>
             </template>
@@ -273,8 +360,14 @@ onMounted(() => {
 
         <!-- Table -->
         <div class="overflow-x-auto rounded-2xl ring-1 ring-slate-200 bg-white relative">
-            <!-- Loading overlay -->
-            <div v-if="loading" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu...</div>
+            <!-- Loading overlay: dùng loadingInit hoặc loadingList -->
+            <div
+                v-if="loadingInit || loadingList"
+                class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"
+            >
+                <i class="fa-solid fa-spinner fa-spin mr-2"></i>
+                Đang tải dữ liệu góp ý...
+            </div>
 
             <table class="min-w-full text-sm">
                 <thead class="bg-slate-50 border-b text-slate-600">
@@ -290,13 +383,20 @@ onMounted(() => {
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="(f, idx) in pagedFeedbacks" :key="f.id" class="border-b last:border-0 hover:bg-slate-50 align-top">
+                    <tr
+                        v-for="(f, idx) in pagedFeedbacks"
+                        :key="f.id"
+                        class="border-b last:border-0 hover:bg-slate-50 align-top"
+                    >
                         <td class="px-3 py-3 text-slate-600">
                             {{ first + idx + 1 }}
                         </td>
                         <td class="px-3 py-3">
                             <div class="font-medium text-slate-800">{{ f.parentName }}</div>
-                            <div class="text-xs text-slate-500">Gửi đến: <span class="text-primary font-semibold">Giáo viên</span></div>
+                            <div class="text-xs text-slate-500">
+                                Gửi đến:
+                                <span class="text-primary font-semibold">Giáo viên</span>
+                            </div>
                             <div class="text-xs text-slate-500 flex items-center gap-1">
                                 <i class="fa-regular fa-clock text-sky-500"></i>
                                 {{ displayTime(f) }} {{ displayDate(f) }}
@@ -317,28 +417,57 @@ onMounted(() => {
                             </div>
                         </td>
                         <td class="px-3 py-3 text-center">
-                            <span class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold" :class="statusView[f.status]?.class || 'bg-slate-300 text-slate-800'">
+                            <span
+                                class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold"
+                                :class="statusView[f.status]?.class || 'bg-slate-300 text-slate-800'"
+                            >
                                 {{ statusView[f.status]?.text || f.status || 'Không xác định' }}
                             </span>
                         </td>
                         <td class="px-3 py-3 text-center">
                             <div class="flex flex-col gap-1 items-stretch">
                                 <!-- Xem chi tiết -->
-                                <Button class="btn-ghost text-xs" label="Xem chi tiết" @click.stop="openDetail(f)" />
+                                <Button
+                                    class="btn-ghost text-xs"
+                                    label="Xem chi tiết"
+                                    @click.stop="openDetail(f)"
+                                />
 
                                 <!-- Đổi trạng thái -->
-                                <Button v-if="f.status === 'NEW' || f.status === 'PENDING'" class="btn-success text-xs" label="Nhận xử lý" @click.stop="changeStatus(f, 'PROCESSING')" />
-                                <Button v-else-if="f.status === 'PROCESSING'" class="btn-primary text-xs" label="Đánh dấu đã xong" @click.stop="changeStatus(f, 'CLOSED')" />
-                                <Button v-else-if="f.status === 'CLOSED'" class="btn-ghost text-xs" label="Mở lại" @click.stop="changeStatus(f, 'PROCESSING')" />
+                                <Button
+                                    v-if="f.status === 'NEW' || f.status === 'PENDING'"
+                                    class="btn-success text-xs"
+                                    label="Nhận xử lý"
+                                    @click.stop="changeStatus(f, 'PROCESSING')"
+                                />
+                                <Button
+                                    v-else-if="f.status === 'PROCESSING'"
+                                    class="btn-primary text-xs"
+                                    label="Đánh dấu đã xong"
+                                    @click.stop="changeStatus(f, 'CLOSED')"
+                                />
+                                <Button
+                                    v-else-if="f.status === 'CLOSED'"
+                                    class="btn-ghost text-xs"
+                                    label="Mở lại"
+                                    @click.stop="changeStatus(f, 'PROCESSING')"
+                                />
 
                                 <!-- Xóa -->
-                                <Button class="btn-ghost text-xs !text-red-600" label="Xóa" icon="pi pi-trash" @click.stop="removeFeedback(f)" />
+                                <Button
+                                    class="btn-ghost text-xs !text-red-600"
+                                    label="Xóa"
+                                    icon="pi pi-trash"
+                                    @click.stop="removeFeedback(f)"
+                                />
                             </div>
                         </td>
                     </tr>
 
-                    <tr v-if="!loading && !filteredFeedbacks.length">
-                        <td colspan="8" class="px-3 py-4 text-center text-slate-500">Không có góp ý phù hợp với bộ lọc hiện tại.</td>
+                    <tr v-if="!loadingInit && !loadingList && !filteredFeedbacks.length">
+                        <td colspan="8" class="px-3 py-4 text-center text-slate-500">
+                            Không có góp ý phù hợp với bộ lọc hiện tại.
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -346,36 +475,60 @@ onMounted(() => {
 
         <!-- Pagination -->
         <div class="flex justify-end">
-            <Paginator :rows="rows" :totalRecords="filteredFeedbacks.length" :first="first" @page="onPageChange" class="mt-3" />
+            <Paginator
+                :rows="rows"
+                :totalRecords="filteredFeedbacks.length"
+                :first="first"
+                @page="onPageChange"
+                class="mt-3"
+            />
         </div>
 
         <!-- Dialog chi tiết góp ý -->
-        <Dialog v-model:visible="detailVisible" modal :closeOnEscape="true" :dismissableMask="true" :breakpoints="{ '960px': '60vw', '640px': '95vw' }" style="width: 600px" :header="detailItem ? `Chi tiết góp ý #${detailItem.id}` : 'Chi tiết góp ý'">
+        <Dialog
+            v-model:visible="detailVisible"
+            modal
+            :closeOnEscape="true"
+            :dismissableMask="true"
+            :breakpoints="{ '960px': '60vw', '640px': '95vw' }"
+            style="width: 600px"
+            :header="detailItem ? `Chi tiết góp ý #${detailItem.id}` : 'Chi tiết góp ý'"
+        >
             <div v-if="detailItem" class="space-y-4">
                 <!-- Phụ huynh -->
                 <div class="border-b pb-3">
-                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Thông tin phụ huynh</div>
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                        Thông tin phụ huynh
+                    </div>
                     <div class="flex justify-between text-sm">
                         <div>
                             <div class="font-semibold text-slate-800">
                                 {{ detailItem.parentName || '—' }}
                             </div>
-                            <div class="text-xs text-slate-500">Gửi đến: Giáo viên lớp {{ detailItem.className }}</div>
+                            <div class="text-xs text-slate-500">
+                                Gửi đến: Giáo viên lớp {{ detailItem.className }}
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Học sinh & lớp -->
                 <div class="border-b pb-3">
-                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Học sinh & lớp</div>
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                        Học sinh & lớp
+                    </div>
                     <div class="space-y-1 text-sm text-slate-700">
                         <div>
                             <span class="font-semibold">Học sinh: </span>{{ detailItem.studentName || '—' }}
-                            <span v-if="detailItem.studentId" class="text-xs text-slate-500"> (ID: {{ detailItem.studentId }}) </span>
+                            <span v-if="detailItem.studentId" class="text-xs text-slate-500">
+                                (ID: {{ detailItem.studentId }})
+                            </span>
                         </div>
                         <div>
                             <span class="font-semibold">Lớp: </span>{{ detailItem.className || '—' }}
-                            <span v-if="detailItem.classId" class="text-xs text-slate-500"> (ID: {{ detailItem.classId }}) </span>
+                            <span v-if="detailItem.classId" class="text-xs text-slate-500">
+                                (ID: {{ detailItem.classId }})
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -387,11 +540,18 @@ onMounted(() => {
                             <span class="font-semibold">Thời gian gửi: </span>
                             {{ displayTime(detailItem) }} {{ displayDate(detailItem) }}
                         </div>
-                        <div v-if="detailItem.createdAt"><span class="font-semibold">Tạo lúc: </span>{{ formatDate(detailItem.createdAt) }}</div>
-                        <div v-if="detailItem.updatedAt"><span class="font-semibold">Cập nhật: </span>{{ formatDate(detailItem.updatedAt) }}</div>
+                        <div v-if="detailItem.createdAt">
+                            <span class="font-semibold">Tạo lúc: </span>{{ formatDate(detailItem.createdAt) }}
+                        </div>
+                        <div v-if="detailItem.updatedAt">
+                            <span class="font-semibold">Cập nhật: </span>{{ formatDate(detailItem.updatedAt) }}
+                        </div>
                     </div>
                     <div>
-                        <span class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold" :class="statusView[detailItem.status]?.class || 'bg-slate-300 text-slate-800'">
+                        <span
+                            class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold"
+                            :class="statusView[detailItem.status]?.class || 'bg-slate-300 text-slate-800'"
+                        >
                             {{ statusView[detailItem.status]?.text || detailItem.status || 'Không xác định' }}
                         </span>
                     </div>
@@ -399,7 +559,9 @@ onMounted(() => {
 
                 <!-- Nội dung -->
                 <div>
-                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Nội dung góp ý</div>
+                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                        Nội dung góp ý
+                    </div>
                     <div class="text-sm leading-relaxed text-slate-800 whitespace-pre-line bg-slate-50 rounded-xl p-3">
                         {{ detailItem.content }}
                     </div>
