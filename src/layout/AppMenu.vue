@@ -39,7 +39,7 @@ const model = ref([
         label: 'Hoạt động',
         items: [
             { label: 'Thực đơn', icon: 'fa-solid fa-clipboard-list', to: '/school/menu' },
-            { label: 'Điểm danh', icon: 'fa-solid fa-check-circle', to: '/school/AttendanceBoard' },
+            { label: 'Điểm danh', icon: 'fa-solid fa-check-circle', to: '/school/attendance/check-in' },
             { label: 'Đơn xin nghỉ', icon: 'fa-solid fa-file-lines', to: '/school/leaveRequest' },
             { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/school/healthrecord' },
             { label: 'Album', icon: 'fa-solid fa-image', to: '/school/album-manager' },

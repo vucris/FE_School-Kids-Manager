@@ -48,7 +48,7 @@ const router = createRouter({
                 {
                     path: 'school/AttendanceBoard',
                     name: 'AttendanceBoard',
-                    component: () => import('@/views/school/AttendanceBoard.vue')
+                    component: () => import('@/views/school/AttendanceCheckIn.vue')
                 },
                 {
                     path: 'school/album-manager',
@@ -75,7 +75,16 @@ const router = createRouter({
                     name: 'leaveRequest',
                     component: () => import('@/views/school/LeaveRequests.vue')
                 },
-
+                {
+                    path: 'school/attendance/check-in',
+                    name: 'AttendanceCheckIn',
+                    component: () => import('@/views/school/AttendanceCheckIn.vue')
+                },
+                {
+                    path: 'school/attendance/check-out',
+                    name: 'AttendanceCheckOut',
+                    component: () => import('@/views/school/AttendanceCheckOut.vue')
+                }
             ]
         },
         {
