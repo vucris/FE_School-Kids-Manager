@@ -14,20 +14,25 @@ function toGenderChar(g) {
     return 'M';
 }
 
-/* Chuẩn hoá ngày: nhận yyyy-MM-dd hoặc dd/MM/yyyy -> yyyy-MM-dd; sai trả '' */
+/* Chuẩn hoá ngày: nhận yyyy-MM-dd hoặc dd/MM/yyyy hoặc dd-MM-yyyy -> yyyy-MM-dd */
 function normalizeDate(s) {
     if (!s) return '';
     s = String(s).trim();
+
+    // yyyy-MM-dd
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
         const d = new Date(s);
         return isNaN(d.getTime()) ? '' : s;
     }
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-        const [dd, mm, yyyy] = s.split('/');
+
+    // dd/MM/yyyy hoặc dd-MM-yyyy
+    if (/^\d{2}[/-]\d{2}[/-]\d{4}$/.test(s)) {
+        const [dd, mm, yyyy] = s.split(/[/-]/);
         const iso = `${yyyy}-${mm}-${dd}`;
         const d = new Date(iso);
         return isNaN(d.getTime()) ? '' : iso;
     }
+
     return '';
 }
 
@@ -40,7 +45,7 @@ function normalizeGender(g) {
     return '';
 }
 
-/* ---------------- Parent cache & helpers (dùng chung cho bảng + modal) ---------------- */
+/* ---------------- Parent cache & helpers ---------------- */
 const parentCache = {
     loaded: false,
     map: new Map() // id -> { fullName, phone, email }
@@ -51,12 +56,21 @@ async function loadParentsAllToCache() {
     try {
         const url = withApiV1('/parents/all');
         const res = await http.get(url);
-        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+        const raw = Array.isArray(res?.data?.data)
+            ? res.data.data
+            : Array.isArray(res?.data)
+            ? res.data
+            : [];
         for (const p of raw) {
             const id = p.id ?? p.parentId;
             if (id == null) continue;
             const fullName = p.fullName || p.username || p.name || `PH ${id}`;
-            const phone = p.phone || p.parentPhone || p.additionalPhone || p.additional_phone || '';
+            const phone =
+                p.phone ||
+                p.parentPhone ||
+                p.additionalPhone ||
+                p.additional_phone ||
+                '';
             const email = p.email || '';
             parentCache.map.set(Number(id), { fullName, phone, email });
         }
@@ -98,18 +112,57 @@ async function enrichStudentsWithParents(items) {
 
 /* ---------------- Map từ BE -> model bảng ---------------- */
 function mapStudentRow(s) {
-    const className = s.className || s.clazz?.className || s.class?.className || '';
+    const classObj = s.clazz || s.classroom || s.classes || s.class || {};
+
+    const classId =
+        s.classId ??
+        s.class_id ??
+        classObj.id ??
+        classObj.classId ??
+        classObj.class_id ??
+        classObj.classroomId ??
+        null;
+
+    const className =
+        s.className ||
+        classObj.className ||
+        classObj.name ||
+        classObj.class_code ||
+        '';
+
     const parentId = s.parentId ?? s.parent_id ?? s.parent?.id ?? null;
     const parentName = s.parentName || s.parent?.fullName || s.parent?.name || '';
     const parentPhone = s.parentPhone || s.parent?.phone || s.parent?.parentPhone || '';
 
+    const code =
+        s.studentCode ||
+        s.code ||
+        s.student_code ||
+        '';
+
+    const dob =
+        s.dateOfBirth ||
+        s.date_of_birth ||
+        s.dob ||
+        '';
+
     return {
-        id: s.id,
-        code: s.studentCode || '',
-        name: s.fullName || '',
-        dob: s.dateOfBirth || '',
+        // id học sinh
+        id: s.id ?? s.accountId ?? s.account_id,
+
+        // mã học sinh – dùng cả code và studentCode cho chắc
+        code,
+        studentCode: code,
+
+        // tên & ngày sinh
+        name: s.fullName || s.name || '',
+        dob,
+
         gender: toGenderChar(s.gender),
+
+        classId,
         className,
+
         parentId,
         parentName,
         parentPhone,
@@ -131,7 +184,9 @@ export async function createStudent(payload) {
         const res = await http.post(url, payload);
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(err?.response?.data?.message || err?.message || 'Tạo học sinh thất bại');
+        throw new Error(
+            err?.response?.data?.message || err?.message || 'Tạo học sinh thất bại'
+        );
     }
 }
 
@@ -143,7 +198,12 @@ export async function getStudentById(id) {
         const res = await http.get(url);
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Không lấy được thông tin học sinh');
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Không lấy được thông tin học sinh'
+        );
     }
 }
 
@@ -160,19 +220,30 @@ export async function updateStudent(id, payload) {
         });
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Cập nhật học sinh thất bại');
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Cập nhật học sinh thất bại'
+        );
     }
 }
 
 /* ---------------- Lỗi ---------------- */
 function extractErrorMessage(err, fallback = 'Lỗi không xác định') {
-    return err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
+    return (
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        fallback
+    );
 }
 
 /* ---------------- Lọc/sort/paginate FE-side ---------------- */
 function applyFiltersSortPaginate(list, params = {}) {
     let items = [...list];
-    if (params.status && params.status !== 'all') items = items.filter((x) => x.status === params.status);
+    if (params.status && params.status !== 'all')
+        items = items.filter((x) => x.status === params.status);
     if (params.code) {
         const q = params.code.trim().toLowerCase();
         items = items.filter((x) => (x.code || '').toLowerCase().includes(q));
@@ -216,13 +287,30 @@ export async function fetchStudents(params = {}) {
     try {
         const url = withApiV1('/students/all');
         const res = await http.get(url);
-        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+        const raw = Array.isArray(res?.data?.data)
+            ? res.data.data
+            : Array.isArray(res?.data)
+            ? res.data
+            : [];
         let mapped = raw.map(mapStudentRow);
         mapped = await enrichStudentsWithParents(mapped);
         return applyFiltersSortPaginate(mapped, params);
     } catch (err) {
-        throw new Error(extractErrorMessage(err, 'Không thể tải danh sách học sinh'));
+        throw new Error(
+            extractErrorMessage(err, 'Không thể tải danh sách học sinh')
+        );
     }
+}
+
+/* Lấy toàn bộ học sinh theo lớp (dùng cho màn Hồ sơ sức khỏe – hiển thị hết, kể cả chưa có dữ liệu y tế) */
+export async function fetchStudentsByClass(classId) {
+    if (!classId) return [];
+    const { items } = await fetchStudents({ page: 1, size: 10000, status: 'all' });
+
+    const target = Number(classId);
+    return items.filter(
+        (s) => s.classId != null && Number(s.classId) === target
+    );
 }
 
 /* ---------------- Import qua BE: POST /api/v1/students/import (multipart 'file') ---------------- */
@@ -231,11 +319,14 @@ export async function importStudentsExcel(file, { onProgress, signal } = {}) {
 
     const endpoint = withApiV1('/students/import');
     const form = new FormData();
-    form.append('file', file); // key 'file' đúng với @RequestParam("file")
+    form.append('file', file);
 
     try {
         const res = await http.post(endpoint, form, {
-            headers: { 'Content-Type': 'multipart/form-data', Accept: 'application/json' },
+            headers: {
+                'Content-Type': 'multipart/form-data',
+                Accept: 'application/json'
+            },
             onUploadProgress: (e) => {
                 if (typeof onProgress === 'function' && e?.total) {
                     onProgress(Math.round((e.loaded * 100) / e.total));
@@ -249,36 +340,34 @@ export async function importStudentsExcel(file, { onProgress, signal } = {}) {
     }
 }
 
-/* ---------------- Tải template import trùng với thứ tự cột backend, header tiếng Việt + 1 dòng DEMO ---------------- */
+/* ---------------- Tải template import ---------------- */
 export async function downloadStudentsImportTemplate() {
-    // Hàng tiêu đề tiếng Việt (backend chỉ quan tâm thứ tự cột, không đọc tên tiêu đề)
     const header = [
-        'Tên đăng nhập', // username
-        'Mật khẩu', // password (BE đang override thành 123456)
-        'Họ và tên học sinh', // fullName
-        'Email học sinh', // email
-        'Số điện thoại học sinh', // phone
-        'Giới tính (Nam/Nữ)', // gender
-        'Ngày sinh (dd-MM-yyyy)', // dateOfBirth - BE parse dd-MM-yyyy
-        'Địa chỉ', // address
-        'Ghi chú sức khỏe', // healthNotes
-        'Mã lớp (class_code)', // class_code
-        'Số điện thoại phụ huynh' // parentPhone
+        'Tên đăng nhập',
+        'Mật khẩu',
+        'Họ và tên học sinh',
+        'Email học sinh',
+        'Số điện thoại học sinh',
+        'Giới tính (Nam/Nữ)',
+        'Ngày sinh (dd-MM-yyyy)',
+        'Địa chỉ',
+        'Ghi chú sức khỏe',
+        'Mã lớp (class_code)',
+        'Số điện thoại phụ huynh'
     ];
 
-    // Dòng DEMO: chỉ minh hoạ, ngày sinh là chuỗi mô tả -> BE không parse được -> không lưu vào DB
     const demoRow = [
-        'DEMO_KHONG_LUU', // username
-        '123456', // password
-        'Ví dụ mẫu - KHÔNG LƯU', // fullName
-        'demo@example.com', // email
-        '0900000000', // phone học sinh
-        'Nam', // gender
-        'dd-MM-yyyy (ví dụ: 01-09-2017)', // dateOfBirthStr -> parse lỗi, không insert
-        'Dòng này chỉ dùng minh hoạ', // address
-        'Có thể xoá dòng này trước khi import', // healthNotes
-        'MG5A', // class_code (ví dụ)
-        '0999999999' // parentPhone (ví dụ)
+        'DEMO_KHONG_LUU',
+        '123456',
+        'Ví dụ mẫu - KHÔNG LƯU',
+        'demo@example.com',
+        '0900000000',
+        'Nam',
+        'dd-MM-yyyy (ví dụ: 01-09-2017)',
+        'Dòng này chỉ dùng minh hoạ',
+        'Có thể xoá dòng này trước khi import',
+        'MG5A',
+        '0999999999'
     ];
 
     const wb = XLSX.utils.book_new();
@@ -304,7 +393,9 @@ export async function downloadStudentsTemplate() {
     try {
         const url = withApiV1('/students/template');
         const res = await http.get(url, { responseType: 'blob' });
-        const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
+        const blob = new Blob([res.data], {
+            type: res.headers['content-type'] || 'application/octet-stream'
+        });
         const dlUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const cd = res.headers['content-disposition'] || '';
@@ -325,23 +416,35 @@ export async function exportStudentsExcel() {
     try {
         const url = withApiV1('/students/export');
         const res = await http.get(url, { responseType: 'blob' });
-        const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
+        const blob = new Blob([res.data], {
+            type: res.headers['content-type'] || 'application/octet-stream'
+        });
         const dlUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const cd = res.headers['content-disposition'] || '';
-        const name = (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx';
+        const name =
+            (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx';
         theDownload(a, dlUrl, name);
     } catch (err) {
+        // fallback CSV
         const { items } = await fetchStudents({ page: 1, size: 10000 });
         const header = 'code,name,className,parentName\n';
-        const rows = items.map((r) => `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`).join('\n');
+        const rows = items
+            .map(
+                (r) =>
+                    `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`
+            )
+            .join('\n');
         const BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
-        const blob = new Blob([BOM, header + rows], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([BOM, header + rows], {
+            type: 'text/csv;charset=utf-8;'
+        });
         const a = document.createElement('a');
         const dlUrl = URL.createObjectURL(blob);
         theDownload(a, dlUrl, 'students.csv');
     }
 }
+
 function theDownload(a, url, name) {
     a.href = url;
     a.download = name;
@@ -369,7 +472,11 @@ async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {
         return { ok: true, status: res?.status ?? 200 };
     } catch (err) {
         const status = err?.response?.status;
-        const bodyMsg = err?.response?.data?.message || err?.response?.data?.error || err?.response?.data?.detail || err?.message;
+        const bodyMsg =
+            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            err?.response?.data?.detail ||
+            err?.message;
         const isTimeout =
             err?.code === 'ECONNABORTED' ||
             String(err?.message || '')
@@ -380,13 +487,13 @@ async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {
     }
 }
 
-export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = false } = {}) {
+export async function deleteStudent(
+    id,
+    { timeoutMs = 12000, withCredentials = false } = {}
+) {
     if (!id) throw new Error('Thiếu id học sinh');
 
-    const candidates = [
-        `/students/delete/${id}`, // backend hiện tại
-        `/students/${id}` // RESTful thuần nếu sau này đổi
-    ];
+    const candidates = [`/students/delete/${id}`, `/students/${id}`];
 
     let lastErr;
     for (const path of candidates) {
@@ -398,7 +505,10 @@ export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = f
             continue;
         }
 
-        const msg = r.message === 'TIMEOUT' ? `Hết thời gian chờ (timeout) khi xóa (URL: ${path})` : `Xóa học sinh thất bại (${r.status || 'n/a'}) tại ${path}: ${r.message}`;
+        const msg =
+            r.message === 'TIMEOUT'
+                ? `Hết thời gian chờ (timeout) khi xóa (URL: ${path})`
+                : `Xóa học sinh thất bại (${r.status || 'n/a'}) tại ${path}: ${r.message}`;
         throw new Error(msg);
     }
 
@@ -407,7 +517,8 @@ export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = f
 
 /* ---------------- Xóa nhiều ---------------- */
 export async function deleteStudents(ids = [], opts = {}) {
-    if (!Array.isArray(ids) || !ids.length) return { ok: 0, fail: 0, errors: [] };
+    if (!Array.isArray(ids) || !ids.length)
+        return { ok: 0, fail: 0, errors: [] };
 
     const concurrency = Number(opts.concurrency ?? 4);
     let i = 0;
@@ -429,7 +540,10 @@ export async function deleteStudents(ids = [], opts = {}) {
         }
     }
 
-    const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
+    const workers = Array.from(
+        { length: Math.min(concurrency, ids.length) },
+        () => worker()
+    );
     await Promise.all(workers);
     return { ok, fail, errors };
 }
@@ -455,14 +569,29 @@ export async function changeStudentClass(studentId, newClassId) {
         );
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Chuyển lớp thất bại');
+        throw new Error(
+            err?.response?.data?.message ||
+                err?.response?.data?.error ||
+                err?.message ||
+                'Chuyển lớp thất bại'
+        );
     }
 }
 
-/* ---------------- bulkImportStudentsFromFile (FE tự đọc Excel) ---------------- */
+/* ---------------- bulkImportStudentsFromFile (FE tự đọc Excel, gọi /students/create) ---------------- */
 export async function bulkImportStudentsFromFile(file, options = {}) {
     const {
-        requiredHeaders = ['studentCode', 'fullName', 'dateOfBirth', 'gender', 'className', 'parentName', 'parentPhone', 'parentEmail', 'address'],
+        requiredHeaders = [
+            'studentCode',
+            'fullName',
+            'dateOfBirth',
+            'gender',
+            'className',
+            'parentName',
+            'parentPhone',
+            'parentEmail',
+            'address'
+        ],
         maxPreview = 20000,
         chunkSize = 20,
         maxConcurrency = 5,
@@ -498,7 +627,9 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
         existing = [];
     }
     const codeSet = new Set(existing.map((s) => s.code).filter(Boolean));
-    const parentPhoneSet = new Set(existing.map((s) => s.parentPhone).filter(Boolean));
+    const parentPhoneSet = new Set(
+        existing.map((s) => s.parentPhone).filter(Boolean)
+    );
     const emailSet = new Set(existing.map((s) => s.email).filter(Boolean));
 
     const rows = json.slice(0, maxPreview).map((r, i) => {
@@ -506,7 +637,10 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         let studentCode = (r.studentCode || '').trim();
         if (!studentCode && autoGenerateCode) {
-            studentCode = 'HS' + Date.now().toString().slice(-6) + (Math.floor(Math.random() * 900) + 100);
+            studentCode =
+                'HS' +
+                Date.now().toString().slice(-6) +
+                (Math.floor(Math.random() * 900) + 100);
         }
         if (!studentCode) rowErrors.push('Thiếu studentCode');
 
@@ -529,16 +663,21 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         const parentPhone = (r.parentPhone || '').trim();
         if (!parentPhone) rowErrors.push('Thiếu parentPhone');
-        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone)) rowErrors.push('parentPhone sai định dạng');
+        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone))
+            rowErrors.push('parentPhone sai định dạng');
 
         const parentEmail = (r.parentEmail || '').trim();
-        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail)) rowErrors.push('parentEmail không hợp lệ');
+        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail))
+            rowErrors.push('parentEmail không hợp lệ');
 
         const address = (r.address || '').trim();
 
-        if (studentCode && codeSet.has(studentCode)) rowErrors.push('studentCode trùng');
-        if (parentPhone && parentPhoneSet.has(parentPhone)) rowErrors.push('parentPhone trùng');
-        if (parentEmail && emailSet.has(parentEmail)) rowErrors.push('parentEmail trùng');
+        if (studentCode && codeSet.has(studentCode))
+            rowErrors.push('studentCode trùng');
+        if (parentPhone && parentPhoneSet.has(parentPhone))
+            rowErrors.push('parentPhone trùng');
+        if (parentEmail && emailSet.has(parentEmail))
+            rowErrors.push('parentEmail trùng');
 
         return {
             index: i,
@@ -581,21 +720,26 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     async function runChunk(chunk) {
         const promises = chunk.map(async (r) => {
             try {
-                const url = withApiV1('/students');
+                const url = withApiV1('/students/create');
                 await http.post(url, r.payload);
                 if (r.payload.studentCode) codeSet.add(r.payload.studentCode);
-                if (r.payload.parentPhone) parentPhoneSet.add(r.payload.parentPhone);
+                if (r.payload.parentPhone)
+                    parentPhoneSet.add(r.payload.parentPhone);
                 if (r.payload.parentEmail) emailSet.add(r.payload.parentEmail);
                 report.inserted += 1;
             } catch (e) {
                 report.failed += 1;
-                report.errors.push(`Row ${r.rowNumber}: ${extractErrorMessage(e, 'Lỗi tạo')}`);
+                report.errors.push(
+                    `Row ${r.rowNumber}: ${extractErrorMessage(e, 'Lỗi tạo')}`
+                );
             } finally {
                 processed += 1;
                 (onProgress || (() => {}))({
                     processed,
                     total: validRows.length,
-                    percent: Math.round((processed * 100) / (validRows.length || 1))
+                    percent: Math.round(
+                        (processed * 100) / (validRows.length || 1)
+                    )
                 });
             }
         });

@@ -84,7 +84,17 @@ const router = createRouter({
                     path: 'school/attendance/check-out',
                     name: 'AttendanceCheckOut',
                     component: () => import('@/views/school/AttendanceCheckOut.vue')
-                }
+                },
+                 {
+                    path: 'school/report/attendance',
+                    name: 'ReportAttendance',
+                    component: () => import('@/views/school/report/ReportAttendance.vue')
+                },
+                   {
+                    path: 'school/finance/fee',
+                    name: 'feeManagement',
+                    component: () => import('@/views/school/FeeManagement.vue')
+                },
             ]
         },
         {

@@ -1,228 +1,222 @@
 // src/service/attendanceService.js
 import http from '@/service/http.js';
 
-/* Helper: tự thêm /api/v1 nếu baseURL chưa có */
+/* Thêm /api/v1 nếu baseURL chưa có */
 function withApiV1(path) {
-  const base = (http?.defaults?.baseURL || '').toLowerCase();
-  return base.includes('/api/v1') ? path : `/api/v1${path}`;
+    const base = (http?.defaults?.baseURL || '').toLowerCase();
+    return base.includes('/api/v1') ? path : `/api/v1${path}`;
 }
 
-/* dd-MM-yyyy (khớp @DateTimeFormat / @JsonFormat ở BE) */
-function toDMY(d) {
-  if (!d) return undefined;
-  const dt = d instanceof Date ? d : new Date(d);
-  if (Number.isNaN(dt)) return undefined;
-  const dd = String(dt.getDate()).padStart(2, '0');
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  const yyyy = dt.getFullYear();
-  return `${dd}-${mm}-${yyyy}`;
-}
-
-/* Map BE -> FE 1 dòng danh sách */
-function mapRow(r) {
-  return {
-    studentId: r.studentId ?? r.id,
-    studentName: r.studentName ?? r.fullName ?? r.name ?? '',
-    className: r.className ?? r.classCode ?? r.clazz ?? '',
-
-    // Điểm danh đến
-    status: r.status ?? null,
-    checkedBy: r.checkedBy ?? r.checkBy ?? '',
-    checkTime: r.checkTime ?? null,
-    note: r.note ?? '',
-
-    // Điểm danh về
-    checkOutStatus: r.checkOutStatus ?? null,
-    checkOutBy: r.checkOutBy ?? '',
-    checkOutTime: r.checkOutTime ?? null,
-    checkOutNote: r.checkOutNote ?? ''
-  };
-}
-
-/**
- * GET /attendance/list?classId=&date=dd-MM-yyyy&status=&keyword=
- */
-export async function fetchAttendanceList({ classId, date, status, keyword }) {
-  const params = {
-    classId,
-    date: typeof date === 'string' ? date : toDMY(date)
-  };
-  if (status && status !== 'ALL') params.status = status;
-  if (keyword) params.keyword = keyword;
-
-  const url = withApiV1('/attendance/list');
-  const res = await http.get(url, { params });
-
-  const raw = Array.isArray(res?.data?.data)
-    ? res.data.data
-    : Array.isArray(res?.data)
-    ? res.data
-    : [];
-
-  return raw.map(mapRow);
-}
-
-/**
- * Cập nhật điểm danh HÀNG LOẠT
- * POST /attendance/bulk-update
- *
- * body = {
- *   classId,
- *   date,
- *   checkedBy,
- *   items: [
- *     { studentId, status?, note?, checkOutStatus?, checkOutNote? }
- *   ]
- * }
- *
- * Với màn "điểm danh đến" chỉ set status + note.
- * Với màn "điểm danh về" chỉ set checkOutStatus + checkOutNote.
- */
-export async function bulkUpdateAttendance({ classId, date, checkedBy, items }) {
-  const body = {
-    classId,
-    date: typeof date === 'string' ? date : toDMY(date),
-    checkedBy,
-    items: (items || []).map((i) => ({
-      studentId: i.studentId,
-      status: i.status ?? null,
-      checkOutStatus: i.checkOutStatus ?? null,
-      note: i.note ?? '',
-      checkOutNote: i.checkOutNote ?? ''
-    }))
-  };
-
-  const url = withApiV1('/attendance/bulk-update');
-
-  try {
-    const res = await http.post(url, body, {
-      headers: { Accept: 'application/json' }
+/* Bỏ các param null/undefined/'' */
+function cleanParams(obj = {}) {
+    const q = { ...obj };
+    Object.keys(q).forEach((k) => {
+        if (q[k] === null || q[k] === undefined || q[k] === '') {
+            delete q[k];
+        }
     });
+    return q;
+}
 
-    if (res?.data?.status && res.data.status !== 200) {
-      throw new Error(res.data.message || 'Cập nhật điểm danh thất bại');
+/* Lấy data từ ApiResponse { status, message, data } */
+function getData(res) {
+    if (!res) return null;
+    if (res.data && typeof res.data === 'object' && 'data' in res.data) {
+        return res.data.data;
+    }
+    return res.data;
+}
+
+/* Lấy message lỗi cho đẹp */
+function getErr(e, fallback) {
+    return (
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        e?.message ||
+        fallback ||
+        'Có lỗi xảy ra'
+    );
+}
+
+/* Đổi Date/ISO -> chuỗi dd-MM-yyyy cho đúng format backend */
+function formatDateParam(value) {
+    if (!value) return null;
+
+    if (typeof value === 'string') {
+        // nếu đã đúng định dạng dd-MM-yyyy thì dùng luôn
+        if (/^\d{2}-\d{2}-\d{4}$/.test(value)) return value;
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return null;
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const yyyy = d.getFullYear();
+        return `${dd}-${mm}-${yyyy}`;
     }
 
-    return res?.data?.data ?? true;
-  } catch (e) {
-    const msg =
-      e?.response?.data?.message ||
-      e?.response?.data?.error ||
-      e?.message ||
-      'Cập nhật điểm danh thất bại';
-    throw new Error(msg);
-  }
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}-${mm}-${yyyy}`;
+}
+
+/* ====== READ APIs – cho báo cáo điểm danh ====== */
+
+/**
+ * GET LIST: GET /api/v1/attendance/list
+ * params: { classId, date, status?, keyword? }
+ *  - date: Date hoặc chuỗi, sẽ convert thành dd-MM-yyyy
+ */
+export async function fetchAttendanceList({ classId, date, status, keyword } = {}) {
+    if (!classId) throw new Error('Thiếu classId');
+    if (!date) throw new Error('Thiếu ngày điểm danh');
+
+    const url = withApiV1('/attendance/list');
+    const params = cleanParams({
+        classId,
+        date: formatDateParam(date),
+        status,
+        keyword
+    });
+
+    try {
+        const res = await http.get(url, { params });
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải danh sách điểm danh'));
+    }
 }
 
 /**
- * Điểm danh ĐẾN cho 1 học sinh – dùng riêng nếu cần
- * POST /attendance/check-in
+ * GET SUMMARY: GET /api/v1/attendance/summary
+ * params: { classId, date }
  */
-export async function updateAttendanceStatus({
-  studentId,
-  classId,
-  date,
-  status,
-  note,
-  checkedBy
-}) {
-  const body = {
-    studentId,
-    classId,
-    date: typeof date === 'string' ? date : toDMY(date),
-    status,
-    note: note ?? '',
-    checkedBy
-  };
+export async function fetchAttendanceSummary({ classId, date } = {}) {
+    if (!classId) throw new Error('Thiếu classId');
+    if (!date) throw new Error('Thiếu ngày điểm danh');
 
-  const url = withApiV1('/attendance/check-in');
-
-  try {
-    const res = await http.post(url, body, {
-      headers: { Accept: 'application/json' }
+    const url = withApiV1('/attendance/summary');
+    const params = cleanParams({
+        classId,
+        date: formatDateParam(date)
     });
 
-    if (res?.data?.status && res.data.status !== 200) {
-      throw new Error(res.data.message || 'Cập nhật điểm danh đến thất bại');
+    try {
+        const res = await http.get(url, { params });
+        return getData(res) || null;
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải thống kê điểm danh'));
     }
-
-    return res?.data?.data ?? true;
-  } catch (e) {
-    const msg =
-      e?.response?.data?.message ||
-      e?.response?.data?.error ||
-      e?.message ||
-      'Cập nhật điểm danh đến thất bại';
-    throw new Error(msg);
-  }
 }
 
 /**
- * Điểm danh VỀ cho 1 học sinh – nếu muốn gọi từng học sinh
- * POST /attendance/check-out
+ * GET STUDENT HISTORY:
+ * GET /api/v1/attendance/history/{studentId}?startDate=&endDate=
  */
-export async function updateAttendanceCheckOut({
-  studentId,
-  classId,
-  date,
-  checkOutStatus,
-  checkOutNote,
-  checkedBy
-}) {
-  const body = {
-    studentId,
-    classId,
-    date: typeof date === 'string' ? date : toDMY(date),
-    checkOutStatus,
-    checkOutNote: checkOutNote ?? '',
-    checkedBy
-  };
+export async function fetchStudentAttendanceHistory(studentId, { startDate, endDate } = {}) {
+    if (!studentId) throw new Error('Thiếu studentId');
 
-  const url = withApiV1('/attendance/check-out');
-
-  try {
-    const res = await http.post(url, body, {
-      headers: { Accept: 'application/json' }
+    const url = withApiV1(`/attendance/history/${studentId}`);
+    const params = cleanParams({
+        startDate: formatDateParam(startDate),
+        endDate: formatDateParam(endDate)
     });
 
-    if (res?.data?.status && res.data.status !== 200) {
-      throw new Error(res.data.message || 'Cập nhật điểm danh về thất bại');
+    try {
+        const res = await http.get(url, { params });
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải lịch sử điểm danh'));
     }
-
-    return res?.data?.data ?? true;
-  } catch (e) {
-    const msg =
-      e?.response?.data?.message ||
-      e?.response?.data?.error ||
-      e?.message ||
-      'Cập nhật điểm danh về thất bại';
-    throw new Error(msg);
-  }
 }
 
-/** Thống kê lớp trong 1 ngày */
-export async function fetchAttendanceSummary({ classId, date }) {
-  const params = {
-    classId,
-    date: typeof date === 'string' ? date : toDMY(date)
-  };
-  const url = withApiV1('/attendance/summary');
-  const res = await http.get(url, { params });
-  return res?.data?.data ?? res?.data ?? null;
+/* ====== WRITE APIs – dùng cho màn điểm danh (nếu cần) ====== */
+
+function mapUpdatePayload(payload = {}) {
+    const cloned = { ...payload };
+    if (cloned.date) {
+        cloned.date = formatDateParam(cloned.date);
+    }
+    return cloned;
 }
 
-/** Lịch sử điểm danh 1 học sinh */
-export async function fetchAttendanceHistory({ studentId, startDate, endDate }) {
-  const params = {
-    startDate: typeof startDate === 'string' ? startDate : toDMY(startDate),
-    endDate: typeof endDate === 'string' ? endDate : toDMY(endDate)
-  };
-  const url = withApiV1(`/attendance/history/${studentId}`);
-  const res = await http.get(url, { params });
-  const raw = Array.isArray(res?.data?.data)
-    ? res.data.data
-    : Array.isArray(res?.data)
-    ? res.data
-    : [];
-  return raw.map(mapRow);
+/** POST /attendance/update */
+export async function updateAttendance(payload) {
+    const url = withApiV1('/attendance/update');
+    try {
+        const res = await http.post(url, mapUpdatePayload(payload), {
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        });
+        return getData(res) ?? true;
+    } catch (e) {
+        throw new Error(getErr(e, 'Cập nhật điểm danh thất bại'));
+    }
 }
+
+/** POST /attendance/bulk-update */
+export async function bulkUpdateAttendance(payload) {
+    const url = withApiV1('/attendance/bulk-update');
+    const cloned = { ...payload };
+    if (cloned.date) cloned.date = formatDateParam(cloned.date);
+    if (!Array.isArray(cloned.items)) cloned.items = [];
+    try {
+        const res = await http.post(url, cloned, {
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        });
+        return getData(res) ?? true;
+    } catch (e) {
+        throw new Error(getErr(e, 'Cập nhật điểm danh hàng loạt thất bại'));
+    }
+}
+
+/** POST /attendance/check-in */
+export async function checkIn(payload) {
+    const url = withApiV1('/attendance/check-in');
+    try {
+        const res = await http.post(url, mapUpdatePayload(payload), {
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        });
+        return getData(res) ?? true;
+    } catch (e) {
+        throw new Error(getErr(e, 'Điểm danh đến thất bại'));
+    }
+}
+
+/** POST /attendance/check-out */
+export async function checkOut(payload) {
+    const url = withApiV1('/attendance/check-out');
+    try {
+        const res = await http.post(url, mapUpdatePayload(payload), {
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        });
+        return getData(res) ?? true;
+    } catch (e) {
+        throw new Error(getErr(e, 'Điểm danh về thất bại'));
+    }
+}
+
+/** POST /attendance/mark-absent */
+export async function markAbsent(payload) {
+    const url = withApiV1('/attendance/mark-absent');
+    try {
+        const res = await http.post(url, mapUpdatePayload(payload), {
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
+        });
+        return getData(res) ?? true;
+    } catch (e) {
+        throw new Error(getErr(e, 'Điểm danh nghỉ thất bại'));
+    }
+}
+
+/* default export cho tiện import */
+export default {
+    fetchAttendanceList,
+    fetchAttendanceSummary,
+    fetchStudentAttendanceHistory,
+    updateAttendance,
+    bulkUpdateAttendance,
+    checkIn,
+    checkOut,
+    markAbsent
+};

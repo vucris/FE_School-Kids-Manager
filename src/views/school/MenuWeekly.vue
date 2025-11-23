@@ -1,4 +1,3 @@
-<!-- src/pages/MenuPage.vue -->
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
@@ -13,10 +12,10 @@ import InputText from 'primevue/inputtext';
 import Swal from 'sweetalert2';
 
 import { fetchClassOptions } from '@/service/classService.js';
-import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu, fetchMenusByClass, deleteWeeklyMenu } from '@/service/menuService.js';
+import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu, updateWeeklyMenu, fetchMenusByClass, deleteWeeklyMenu } from '@/service/menuService.js';
 
 /* ===== Tabs (Tạo thực đơn / Chi tiết thực đơn) ===== */
-const activeTab = ref('create'); // 'create' hoặc 'detail'
+const activeTab = ref('create'); // 'create' | 'detail'
 function switchTab(tab) {
     activeTab.value = tab;
 }
@@ -81,6 +80,7 @@ const dishOptions = computed(() =>
 const daysOfWeek = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 const mealTypes = ['Sáng', 'Trưa', 'Chiều'];
 
+// weeklyMenu: { [day]: { [meal]: { dishIds: number[] } } }
 const weeklyMenu = ref({});
 function initEmptyWeeklyMenu() {
     const m = {};
@@ -96,7 +96,7 @@ function initEmptyWeeklyMenu() {
 /* Map từ BE -> weeklyMenu */
 function applyMenuFromBackend(menu) {
     initEmptyWeeklyMenu();
-    if (!menu?.items) return;
+    if (!menu || !menu.items) return;
     menu.items.forEach((it) => {
         const day = it.dayOfWeek;
         const meal = it.mealType;
@@ -109,18 +109,36 @@ function applyMenuFromBackend(menu) {
 const currentMenuId = ref(null);
 
 /* Loading states */
-const loadingInit = ref(false);
-const loadingWeekly = ref(false);
-const savingMenu = ref(false);
+const loadingInit = ref(false); // khởi tạo chung
+const loadingWeekly = ref(false); // load 1 thực đơn tuần
+const savingMenu = ref(false); // lưu thực đơn tuần
 
-/* Modal thêm món ăn */
+/* ====== MODAL THÊM MÓN ĂN ====== */
 const showAddDishModal = ref(false);
 const newDishNamesText = ref('');
+const dishModalTab = ref('quick'); // 'quick' | 'list'
+
+const parsedDishes = computed(() =>
+    newDishNamesText.value
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+);
+
+function removeDish(idx) {
+    const arr = parsedDishes.value;
+    if (!arr[idx]) return;
+    const toRemove = arr[idx];
+    const lines = newDishNamesText.value.split('\n');
+    const nextLines = lines.filter((l) => l.trim() !== toRemove);
+    newDishNamesText.value = nextLines.join('\n');
+}
 
 /* ====== PHẦN 2: CHI TIẾT THỰC ĐƠN (LIST + DETAIL) ====== */
 const classFilterText = ref(''); // lọc theo tên khối/lớp
 
-const menuList = ref([]); // [{ id, classId, className, startDate, endDate, createdBy, raw }]
+// [{ id, classId, className, startDate, endDate, createdBy, raw }]
+const menuList = ref([]);
 const selectedMenu = ref(null);
 const detailMenu = ref(null); // MenuResponse của menu đang xem
 const detailLoading = ref(false);
@@ -129,9 +147,9 @@ const detailDaysOfWeek = daysOfWeek;
 const detailMealTypes = ['Bữa sáng', 'Bữa trưa', 'Bữa chiều'];
 
 function getDishesBy(day, mealType) {
-    if (!detailMenu.value?.items) return [];
+    if (!detailMenu.value || !detailMenu.value.items) return [];
     const mealKey = mealType.replace('Bữa ', '');
-    return detailMenu.value.items.filter((it) => it.dayOfWeek === day && (it.mealType === mealKey || it.mealType.toLowerCase() === mealKey.toLowerCase())).flatMap((it) => it.dishes || []);
+    return detailMenu.value.items.filter((it) => it.dayOfWeek === day && (it.mealType === mealKey || String(it.mealType).toLowerCase() === mealKey.toLowerCase())).flatMap((it) => it.dishes || []);
 }
 
 /* Lọc theo tên khối/lớp client-side */
@@ -174,13 +192,11 @@ async function onDeleteSelectedMenu() {
     try {
         await deleteWeeklyMenu(detailMenu.value.id);
 
-        // Xóa khỏi danh sách bên trái
         const idx = menuList.value.findIndex((m) => m.id === detailMenu.value.id);
         if (idx !== -1) {
             menuList.value.splice(idx, 1);
         }
 
-        // Chọn thực đơn mới (nếu còn) hoặc clear
         if (menuList.value.length > 0) {
             selectedMenu.value = menuList.value[0];
             detailMenu.value = menuList.value[0].raw;
@@ -204,7 +220,6 @@ async function onDeleteSelectedMenu() {
 
 /* ===== INIT: load lớp, món ăn, tất cả thực đơn cho tab Chi tiết ===== */
 async function initAllMenus() {
-    // menuList sẽ chứa tất cả thực đơn của mọi lớp, không cần bấm Tìm
     detailLoading.value = true;
     try {
         const all = [];
@@ -219,16 +234,14 @@ async function initAllMenus() {
                     startDate: new Date(m.startDate),
                     endDate: new Date(m.endDate),
                     createdBy: m.createdBy,
-                    raw: m // lưu luôn MenuResponse để hiển thị chi tiết
+                    raw: m
                 });
             });
         }
 
-        // Sort: mới nhất trước
-        all.sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+        all.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
         menuList.value = all;
 
-        // Nếu có thực đơn thì chọn cái đầu tiên
         if (menuList.value.length > 0) {
             selectedMenu.value = menuList.value[0];
             detailMenu.value = menuList.value[0].raw;
@@ -249,10 +262,10 @@ async function initAllMenus() {
 async function init() {
     loadingInit.value = true;
     try {
-        classOptions.value = await fetchClassOptions(); // dùng chung cho tab tạo + tab chi tiết
+        classOptions.value = await fetchClassOptions();
         allDishes.value = await fetchAllMenuDishes();
         initEmptyWeeklyMenu();
-        await initAllMenus(); // tải toàn bộ thực đơn tất cả lớp 1 lần
+        await initAllMenus();
     } catch (e) {
         Swal.fire({
             icon: 'error',
@@ -325,16 +338,16 @@ async function onSaveWeeklyMenu() {
 
     const payload = {
         classId: selectedClassId.value,
-        startDate: formatDate_ddMMyyyy(start), // BE dùng @JsonFormat("dd/MM/yyyy")
+        startDate: formatDate_ddMMyyyy(start),
         endDate: formatDate_ddMMyyyy(end),
-        createdBy: 'admin', // sau này có thể dùng tên user login
+        createdBy: 'admin',
         items: []
     };
 
     daysOfWeek.forEach((day) => {
         mealTypes.forEach((meal) => {
-            const cell = weeklyMenu.value[day]?.[meal];
-            const ids = cell?.dishIds || [];
+            const cell = weeklyMenu.value[day] && weeklyMenu.value[day][meal];
+            const ids = (cell && cell.dishIds) || [];
             if (ids.length) {
                 payload.items.push({
                     dayOfWeek: day,
@@ -357,23 +370,19 @@ async function onSaveWeeklyMenu() {
     savingMenu.value = true;
     try {
         if (currentMenuId.value) {
-            // Nếu đã tồn tại menuId -> gọi API update
             await updateWeeklyMenu(currentMenuId.value, payload);
             swalToast.fire({
                 icon: 'success',
                 title: 'Cập nhật thực đơn tuần thành công'
             });
         } else {
-            // Chưa có -> tạo mới
             const created = await createWeeklyMenu(payload);
-            currentMenuId.value = created?.id || null;
+            currentMenuId.value = created && created.id ? created.id : null;
             swalToast.fire({
                 icon: 'success',
                 title: 'Tạo thực đơn tuần thành công'
             });
         }
-
-        // Sau khi lưu, reload lại danh sách thực đơn bên tab Chi tiết
         await initAllMenus();
     } catch (e) {
         Swal.fire({
@@ -386,12 +395,9 @@ async function onSaveWeeklyMenu() {
     }
 }
 
-/* Thêm nhiều món ăn */
+/* Thêm nhiều món ăn (dùng parsedDishes) */
 async function onSaveNewDishes() {
-    const names = newDishNamesText.value
-        .split('\n')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+    const names = parsedDishes.value;
 
     if (!names.length) {
         Swal.fire({
@@ -409,7 +415,7 @@ async function onSaveNewDishes() {
 
         swalToast.fire({
             icon: 'success',
-            title: `Đã thêm ${created.length || names.length} món ăn mới`
+            title: `Đã thêm ${(created && created.length) || names.length} món ăn mới`
         });
     } catch (e) {
         Swal.fire({
@@ -425,7 +431,7 @@ onMounted(init);
 
 <template>
     <div class="menu-page-wrapper">
-        <!-- Tabs giống điểm danh đến / điểm danh về -->
+        <!-- Tabs -->
         <div class="tabs-wrapper">
             <button class="tab-item" :class="{ active: activeTab === 'create' }" @click="switchTab('create')">Tạo thực đơn tuần</button>
             <button class="tab-item" :class="{ active: activeTab === 'detail' }" @click="switchTab('detail')">Chi tiết thực đơn</button>
@@ -454,7 +460,10 @@ onMounted(init);
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">
                         Ngày kết thúc tuần
-                        <span v-if="autoEndDate" class="text-xs text-slate-500"> (gợi ý: {{ autoEndDate.toLocaleDateString('vi-VN') }}) </span>
+                        <span v-if="autoEndDate" class="text-xs text-slate-500">
+                            (gợi ý:
+                            {{ autoEndDate && autoEndDate.toLocaleDateString('vi-VN') }})
+                        </span>
                     </label>
                     <Calendar v-model="endDate" dateFormat="dd/mm/yy" class="w-full" showIcon />
                 </div>
@@ -465,15 +474,23 @@ onMounted(init);
             </div>
 
             <!-- Danh sách món ăn + nút thêm -->
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between mt-1">
                 <div class="text-sm text-slate-700">
                     Tổng số món ăn: <b>{{ allDishes.length }}</b>
                 </div>
-                <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-plus mr-2" label="Thêm món ăn" @click="showAddDishModal = true" />
+                <Button
+                    class="!bg-emerald-600 !border-0 !text-white"
+                    icon="fa-solid fa-plus mr-2"
+                    label="Thêm món ăn"
+                    @click="
+                        dishModalTab = 'quick';
+                        showAddDishModal = true;
+                    "
+                />
             </div>
 
             <!-- Bảng thực đơn tuần -->
-            <div class="overflow-auto border border-slate-200 rounded-xl bg-white">
+            <div class="overflow-auto border border-slate-200 rounded-xl bg-white mt-2">
                 <table class="min-w-full text-sm">
                     <thead class="bg-slate-50">
                         <tr>
@@ -499,7 +516,7 @@ onMounted(init);
                                     class="w-full"
                                     placeholder="Chọn món"
                                 />
-                                <span v-else class="text-xs text-rose-500"> đang tải thực đơn </span>
+                                <span v-else class="text-xs text-rose-500">đang tải thực đơn</span>
                             </td>
                         </tr>
                     </tbody>
@@ -507,31 +524,78 @@ onMounted(init);
             </div>
 
             <!-- Modal thêm món ăn -->
-            <Dialog v-model:visible="showAddDishModal" modal :draggable="false" :style="{ width: '480px' }">
+            <Dialog v-model:visible="showAddDishModal" modal :draggable="false" :style="{ width: '540px', maxWidth: '95vw' }" contentClass="dish-modal">
                 <template #header>
-                    <div class="text-lg font-semibold text-slate-800">Thêm món ăn</div>
+                    <div class="flex items-center justify-between w-full">
+                        <div>
+                            <div class="text-lg font-semibold text-slate-800">Thêm món ăn</div>
+                            <div class="text-xs text-slate-500 mt-0.5">Nhập nhanh nhiều món, hệ thống sẽ tự tách thành danh sách.</div>
+                        </div>
+                    </div>
                 </template>
 
-                <div class="space-y-3">
-                    <p class="text-sm text-slate-600">Nhập mỗi món ăn một dòng. Ví dụ:</p>
-                    <div class="text-xs bg-slate-50 border border-slate-200 rounded px-3 py-2">
-                        Cơm gà xối mỡ<br />
-                        Canh rau củ thập cẩm<br />
-                        Trứng chiên<br />
-                        ...
+                <div class="space-y-4">
+                    <!-- Tabs trong modal -->
+                    <div class="flex gap-1 rounded-xl bg-slate-100 p-1 text-xs font-medium text-slate-600">
+                        <button type="button" class="flex-1 px-3 py-2 rounded-lg transition" :class="dishModalTab === 'quick' ? 'dish-tab--active' : 'dish-tab'" @click="dishModalTab = 'quick'">Nhập nhanh</button>
+                        <button type="button" class="flex-1 px-3 py-2 rounded-lg transition" :class="dishModalTab === 'list' ? 'dish-tab--active' : 'dish-tab'" @click="dishModalTab = 'list'">Danh sách món ({{ parsedDishes.length }})</button>
                     </div>
-                    <textarea
-                        v-model="newDishNamesText"
-                        rows="8"
-                        class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
-                        placeholder="Nhập tên món ăn, mỗi dòng một món"
-                    ></textarea>
+
+                    <!-- Tab: Nhập nhanh -->
+                    <div v-if="dishModalTab === 'quick'" class="space-y-3">
+                        <p class="text-sm text-slate-600">Nhập mỗi món ăn một dòng. Ví dụ:</p>
+                        <div class="text-xs bg-slate-50 border border-slate-200 rounded px-3 py-2 leading-relaxed font-mono">
+                            Cơm gà xối mỡ<br />
+                            Canh rau củ thập cẩm<br />
+                            Trứng chiên<br />
+                            ...
+                        </div>
+                        <textarea
+                            v-model="newDishNamesText"
+                            rows="8"
+                            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                            placeholder="Nhập tên món ăn, mỗi dòng một món"
+                        ></textarea>
+                        <div class="flex justify-between items-center text-xs text-slate-500">
+                            <span
+                                >Đã nhập: <b>{{ parsedDishes.length }}</b> món</span
+                            >
+                            <span v-if="parsedDishes.length" class="italic"> Chuyển sang tab <b>Danh sách món</b> để xem và xóa từng món. </span>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Danh sách món -->
+                    <div v-else class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <div class="text-sm font-semibold text-slate-700">Danh sách món đã nhập ({{ parsedDishes.length }})</div>
+                            <div v-if="parsedDishes.length" class="text-xs text-slate-500">Nhấp vào nút <span class="badge-delete">X</span> để xóa món.</div>
+                        </div>
+
+                        <div v-if="!parsedDishes.length" class="border border-dashed border-slate-200 rounded-lg px-3 py-4 text-center text-xs text-slate-400">Chưa có món nào. Hãy nhập ở tab <b>Nhập nhanh</b>.</div>
+
+                        <div v-else class="max-h-72 overflow-auto border border-slate-200 rounded-lg divide-y divide-slate-100 bg-slate-50/50">
+                            <div v-for="(dish, idx) in parsedDishes" :key="idx" class="flex items-center justify-between px-3 py-2.5 bg-white/70 hover:bg-slate-50 transition">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <span class="w-6 text-[11px] text-slate-400 text-right flex-shrink-0">
+                                        {{ idx + 1 }}
+                                    </span>
+                                    <span class="text-sm text-slate-800 truncate">
+                                        {{ dish }}
+                                    </span>
+                                </div>
+                                <button type="button" class="btn-delete-chip" title="Xóa món này khỏi danh sách" @click="removeDish(idx)">✕</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <template #footer>
-                    <div class="flex justify-end gap-2 w-full">
-                        <Button class="!bg-slate-200 !text-slate-800 !border-0" label="Hủy" @click="showAddDishModal = false" />
-                        <Button class="!bg-primary !text-white !border-0" label="Lưu món ăn" @click="onSaveNewDishes" />
+                    <div class="flex justify-between items-center w-full">
+                        <div class="text-xs text-slate-500">Các món sau khi lưu sẽ được thêm vào danh sách món ăn của trường.</div>
+                        <div class="flex justify-end gap-2">
+                            <Button class="!bg-slate-200 !text-slate-800 !border-0 px-3" label="Hủy" @click="showAddDishModal = false" />
+                            <Button class="!bg-primary !text-white !border-0 px-4" :disabled="!parsedDishes.length" :label="parsedDishes.length ? 'Lưu ' + parsedDishes.length + ' món ăn' : 'Chưa có món'" @click="onSaveNewDishes" />
+                        </div>
                     </div>
                 </template>
             </Dialog>
@@ -565,7 +629,14 @@ onMounted(init);
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(row, idx) in filteredMenuList" :key="row.id" :class="{ active: selectedMenu && selectedMenu.id === row.id }" @click="onSelectMenu(row)">
+                                <tr
+                                    v-for="(row, idx) in filteredMenuList"
+                                    :key="row.id"
+                                    :class="{
+                                        active: selectedMenu && selectedMenu.id === row.id
+                                    }"
+                                    @click="onSelectMenu(row)"
+                                >
                                     <td>{{ idx + 1 }}</td>
                                     <td>{{ row.className }}</td>
                                     <td>{{ formatDateDisplay(row.startDate) }}</td>
@@ -862,6 +933,43 @@ onMounted(init);
     margin-top: 16px;
     font-size: 13px;
     color: #6b7280;
+}
+
+/* Modal món ăn */
+.dish-modal {
+    padding-top: 0.5rem;
+}
+.dish-tab {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #6b7280;
+}
+.dish-tab--active {
+    background: #ffffff;
+    box-shadow:
+        0 1px 2px rgb(15 23 42 / 0.15),
+        0 1px 3px rgb(15 23 42 / 0.1);
+    color: #0f172a;
+}
+.badge-delete {
+    padding: 0 4px;
+    border-radius: 999px;
+    border: 1px solid #fecaca;
+    background: #fee2e2;
+    color: #b91c1c;
+}
+.btn-delete-chip {
+    inline-size: 24px;
+    block-size: 24px;
+    border-radius: 999px;
+    border: 1px solid #fecaca;
+    background: #fee2e2;
+    color: #b91c1c;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Responsive */

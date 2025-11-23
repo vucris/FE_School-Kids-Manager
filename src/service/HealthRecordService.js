@@ -1,353 +1,256 @@
-// src/service/HealthRecordService.js
 import http from '@/service/http.js';
-import * as XLSX from 'xlsx'; // npm i xlsx
-import { fetchClassById } from '@/service/classService.js'; // dùng để lấy tên lớp
 
-/* ================== HELPERS CHUNG ================== */
-
+/* Helper: tự thêm /api/v1 nếu baseURL chưa có */
 function withApiV1(path) {
     const base = (http?.defaults?.baseURL || '').toLowerCase();
     return base.includes('/api/v1') ? path : `/api/v1${path}`;
 }
 
-function extractErrorMessage(err, fallback = 'Lỗi không xác định') {
-    return err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
+/* Map 1 record BE -> FE */
+/* Map 1 record BE -> FE */
+function mapHealthRecord(r = {}) {
+  const s = r.student || r.studentDto || r.studentEntity || {};
+  const classObj = r.clazz || r.classroom || s.clazz || s.classroom || {};
+
+  const studentId =
+    r.studentId ?? s.studentId ?? s.id ?? null;
+
+  const studentCode =
+    r.studentCode ||
+    s.studentCode ||
+    s.code ||
+    s.student_code ||
+    '';
+
+  const studentName =
+    r.studentName ||
+    s.fullName ||
+    s.name ||
+    '';
+
+  const classId =
+    r.classId ??
+    classObj.id ??
+    classObj.classId ??
+    classObj.class_id ??
+    null;
+
+  const className =
+    r.className ||
+    classObj.className ||
+    classObj.name ||
+    classObj.class_code ||
+    '';
+
+  return {
+    id: r.id,
+    studentId,
+    studentCode,
+    studentName,
+    classId,
+    className,
+    recordYear: r.recordYear,
+    recordMonth: r.recordMonth,
+    ageInMonths: r.ageInMonths,
+    weightKg: r.weightKg,
+    heightCm: r.heightCm,
+    bmi: r.bmi,
+    nutritionStatus: r.nutritionStatus,
+    bloodType: r.bloodType,
+    knowsSwimming: r.knowsSwimming,
+    eyeIssue: r.eyeIssue,
+    dentalIssue: r.dentalIssue,
+    note: r.note,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt
+  };
 }
 
-// đọc ô với nhiều key khác nhau (VD: ['Mã học sinh', 'studentCode'])
-function getCell(row, keys = []) {
-    for (const k of keys) {
-        if (k in row && row[k] !== '') return row[k];
-    }
-    return '';
+
+
+/* ===================== CRUD / SEARCH ===================== */
+
+/** GET /health-records/all */
+export async function fetchAllHealthRecords() {
+    const url = withApiV1('/health-records/all');
+    const res = await http.get(url);
+    const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
+    return raw.map(mapHealthRecord);
 }
 
-/* ================== CRUD CƠ BẢN ================== */
-
-/**
- * GET /api/v1/health-records/search
- * params: { studentId?, classId?, year?, month? }
- */
-export async function fetchHealthRecords(params = {}) {
-    const url = withApiV1('/health-records/search');
-
-    const query = { ...params };
-    Object.keys(query).forEach((k) => {
-        if (query[k] === null || query[k] === undefined || query[k] === '') {
-            delete query[k];
-        }
-    });
-
-    try {
-        const res = await http.get(url, { params: query });
-        return res?.data?.data || res?.data || [];
-    } catch (e) {
-        throw new Error(extractErrorMessage(e, 'Không thể tải hồ sơ sức khỏe'));
-    }
-}
-
-/**
- * DELETE /api/v1/health-records/{id}
- */
-export async function deleteHealthRecord(id) {
-    if (!id) throw new Error('Thiếu id hồ sơ');
+/** GET /health-records/{id} */
+export async function fetchHealthRecordById(id) {
     const url = withApiV1(`/health-records/${id}`);
-    try {
-        await http.delete(url);
-        return true;
-    } catch (e) {
-        throw new Error(extractErrorMessage(e, 'Không thể xóa hồ sơ sức khỏe'));
-    }
+    const res = await http.get(url);
+    return res?.data?.data ? mapHealthRecord(res.data.data) : null;
+}
+
+/** GET /health-records/student/{studentId} */
+export async function fetchHealthRecordsByStudent(studentId) {
+    const url = withApiV1(`/health-records/student/${studentId}`);
+    const res = await http.get(url);
+    const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
+    return raw.map(mapHealthRecord);
+}
+
+/** GET /health-records/class/{classId}  (giống Postman) */
+export async function fetchHealthRecordsByClass(classId) {
+    const url = withApiV1(`/health-records/class/${classId}`);
+    const res = await http.get(url);
+    const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
+    return raw.map(mapHealthRecord);
 }
 
 /**
- * POST /api/v1/health-records/calculate-bmi
- * (giữ lại nếu cần dùng ở màn khác)
+ * FE-side: lấy toàn bộ hồ sơ theo lớp rồi FILTER theo năm/tháng trên FE
  */
-export async function calculateBmi(weightKg, heightCm) {
-    const url = withApiV1('/health-records/calculate-bmi');
-    try {
-        const res = await http.post(url, null, {
-            params: { weightKg, heightCm }
-        });
-        return res?.data?.data ?? null;
-    } catch (e) {
-        throw new Error(extractErrorMessage(e, 'Không thể tính BMI'));
-    }
+export async function fetchHealthRecordsByClassAndPeriodFE(classId, year, month) {
+    const all = await fetchHealthRecordsByClass(classId);
+    if (!year && !month) return all;
+
+    return all.filter((r) => {
+        const okYear = year ? r.recordYear === Number(year) : true;
+        const okMonth = month ? r.recordMonth === Number(month) : true;
+        return okYear && okMonth;
+    });
 }
 
-/* ================== HỖ TRỢ LẤY DANH SÁCH HỌC SINH THEO LỚP ================== */
-
 /**
- * Lấy toàn bộ học sinh của 1 lớp (dùng cho tải template + import).
- * Trả về [{ id, studentCode, fullName, className }]
+ * Tìm kiếm theo nhiều tiêu chí bằng /search
  */
-async function loadStudentsByClass(classId) {
-    const urlStudents = withApiV1('/students/all');
-    const res = await http.get(urlStudents);
-    const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+export async function searchHealthRecords({ studentId, classId, year, month } = {}) {
+    const params = {};
+    if (studentId) params.studentId = studentId;
+    if (classId) params.classId = classId;
+    if (year) params.year = year;
+    if (month) params.month = month;
 
-    // Lấy thông tin lớp để chuẩn hoá className
-    let classInfo = null;
-    try {
-        classInfo = await fetchClassById(classId);
-    } catch (e) {
-        console.warn('[HealthRecordService] Không lấy được thông tin lớp:', e?.message || e);
-    }
-    const classNameStd = (classInfo?.className || '').trim().toLowerCase();
-
-    const students = raw
-        .filter((s) => {
-            const cid = s.classId ?? s.class_id ?? s.clazz?.id ?? s.class?.id ?? null;
-
-            const nameRaw = s.className || s.clazz?.className || s.class?.className || '';
-            const nameNorm = String(nameRaw).trim().toLowerCase();
-
-            if (cid != null) {
-                return Number(cid) === Number(classId);
-            }
-
-            if (classNameStd) {
-                return nameNorm === classNameStd;
-            }
-
-            return false;
-        })
-        .map((s) => ({
-            id: s.id,
-            studentCode: s.studentCode || s.code || '',
-            fullName: s.fullName || s.studentName || s.name || '',
-            className: s.className || classInfo?.className || ''
-        }))
-        .filter((s) => s.studentCode && s.fullName)
-        .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi'));
-
-    return students;
+    const url = withApiV1('/health-records/search');
+    const res = await http.get(url, { params });
+    const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
+    return raw.map(mapHealthRecord);
 }
 
-/* ================== TẢI MẪU EXCEL THEO LỚP ================== */
-
-/**
- * Tải file Excel mẫu nhập thông tin sức khỏe cho toàn bộ học sinh của 1 lớp.
- *
- * Header tiếng Việt, có 1 dòng DEMO ở trên cùng.
- * Dòng DEMO dùng mã học sinh bắt đầu bằng "VD_" để khi import sẽ tự bỏ qua.
- */
-export async function downloadHealthTemplateForClass(classId) {
-    if (!classId) throw new Error('Vui lòng chọn lớp trước khi tải mẫu');
-
-    const students = await loadStudentsByClass(classId);
-
-    if (!students.length) {
-        throw new Error('Lớp này hiện chưa có học sinh để tạo mẫu');
-    }
-
-    // Header tiếng Việt
-    const header = ['Mã học sinh', 'Tên học sinh', 'Lớp', 'Tuổi (tháng)', 'Cân nặng (kg)', 'Chiều cao (cm)', 'Tình trạng dinh dưỡng', 'Nhóm máu', 'Biết bơi', 'Vấn đề mắt', 'Vấn đề răng miệng', 'Ghi chú'];
-
-    // Dòng demo mẫu (sẽ không import vì mã bắt đầu bằng "VD_")
-    const demoRow = ['VD_HS0001', 'Ví dụ: Nguyễn An', 'Ví dụ: Lớp Mẫu giáo 5A', '60', '18.5', '110', 'Bình thường', 'O', 'Có', 'Không', 'Không', 'DÒNG MẪU – có thể tham khảo, nếu sửa lại thành học sinh thật thì sẽ được nhập.'];
-
-    // Các dòng học sinh thật (chưa có số đo)
-    const rows = students.map((s) => [
-        s.studentCode,
-        s.fullName,
-        s.className,
-        '', // Tuổi tháng
-        '', // Cân nặng
-        '', // Chiều cao
-        '', // Tình trạng dinh dưỡng
-        '', // Nhóm máu
-        '', // Biết bơi
-        '', // Vấn đề mắt
-        '', // Vấn đề răng miệng
-        '' // Ghi chú
-    ]);
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([header, demoRow, ...rows]);
-    XLSX.utils.book_append_sheet(wb, ws, 'NhapYTe');
-
-    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([wbout], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+/** POST /health-records/create */
+export async function createHealthRecord(payload) {
+    const url = withApiV1('/health-records/create');
+    const res = await http.post(url, payload, {
+        headers: { Accept: 'application/json' }
     });
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `mau_nhap_yte_lop_${classId}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    if (res?.data?.status && res.data.status >= 400) {
+        throw new Error(res.data.message || 'Tạo hồ sơ sức khỏe thất bại');
+    }
+    return res?.data?.data ? mapHealthRecord(res.data.data) : null;
 }
 
-/* ================== IMPORT EXCEL VÀO HEALTH RECORD ================== */
+/** PUT /health-records/{id} */
+export async function updateHealthRecord(id, payload) {
+    const url = withApiV1(`/health-records/${id}`);
+    const res = await http.put(url, payload, {
+        headers: { Accept: 'application/json' }
+    });
 
-function parseBool(v) {
-    if (v === true || v === false) return v;
-    if (v == null || v === '') return null;
-    const s = String(v).trim().toLowerCase();
-    if (['1', 'true', 'x', 'yes', 'y', 'có', 'co'].includes(s)) return true;
-    if (['0', 'false', 'no', 'không', 'khong'].includes(s)) return false;
-    return null;
+    if (res?.data?.status && res.data.status >= 400) {
+        throw new Error(res.data.message || 'Cập nhật hồ sơ sức khỏe thất bại');
+    }
+    return res?.data?.data ? mapHealthRecord(res.data.data) : null;
+}
+
+/** DELETE /health-records/{id} */
+export async function deleteHealthRecord(id) {
+    const url = withApiV1(`/health-records/${id}`);
+    const res = await http.delete(url, {
+        headers: { Accept: 'application/json' }
+    });
+
+    if (res?.data?.status && res.data.status >= 400) {
+        throw new Error(res.data.message || 'Xóa hồ sơ sức khỏe thất bại');
+    }
+    return true;
+}
+
+/* ===================== BMI ===================== */
+
+/**
+ * POST /health-records/calculate-bmi?weightKg=&heightCm=
+ * Backend trả ApiResponse<BigDecimal>
+ */
+export async function calculateBMI(weightKg, heightCm) {
+    const url = withApiV1('/health-records/calculate-bmi');
+    const res = await http.post(url, null, {
+        params: { weightKg, heightCm },
+        headers: { Accept: 'application/json' }
+    });
+
+    if (res?.data?.status && res.data.status >= 400) {
+        throw new Error(res.data.message || 'Tính BMI thất bại');
+    }
+    return res?.data?.data ?? null;
+}
+
+/* ===================== EXCEL: TEMPLATE / IMPORT / EXPORT ===================== */
+
+/** Tải file mẫu Excel 1 lớp */
+export async function downloadHealthRecordTemplate(classId) {
+    const url = withApiV1(`/health-records/class/${classId}/template`);
+    const res = await http.get(url, { responseType: 'blob' });
+    return res.data; // Blob
 }
 
 /**
- * Import file Excel chiều cao – cân nặng cho 1 lớp.
- *
- * Quy tắc:
- *  - Dòng DEMO có mã học sinh bắt đầu bằng "VD_" -> bỏ qua.
- *  - Hàng nào không có mã học sinh, hoặc thiếu cả cân nặng & chiều cao -> BỎ QUA, KHÔNG LỖI.
- *  - Tìm học sinh bằng studentCode trong danh sách lớp; nếu không thấy -> đánh dấu failed.
- *
- * Gọi BE: POST /api/v1/health-records/create (cho từng dòng hợp lệ).
+ * Import từ Excel
+ * POST /health-records/import
  */
-export async function importHealthRecordsFromFile(file, { classId, recordDate, onProgress } = {}) {
-    if (!file) throw new Error('Chưa chọn file nhập');
-    if (!classId) throw new Error('Chưa chọn lớp cần nhập');
+export async function importHealthRecordsFromExcel({ file, classId, recordYear, recordMonth }) {
+    const url = withApiV1('/health-records/import');
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('classId', classId);
+    formData.append('recordYear', recordYear);
+    formData.append('recordMonth', recordMonth);
 
-    let dateObj = recordDate;
-    if (!(dateObj instanceof Date)) {
-        dateObj = new Date(recordDate);
-    }
-    if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) {
-        throw new Error('Ngày đo không hợp lệ');
-    }
+    const res = await http.post(url, formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+            Accept: 'application/json'
+        }
+    });
 
-    const recordYear = dateObj.getFullYear();
-    const recordMonth = dateObj.getMonth() + 1;
-
-    // đọc Excel
-    let workbook;
-    try {
-        const buf = await file.arrayBuffer();
-        workbook = XLSX.read(buf, { type: 'array' });
-    } catch {
-        throw new Error('Không đọc được file Excel. Vui lòng kiểm tra lại định dạng.');
+    if (res?.data?.status && res.data.status >= 400) {
+        throw new Error(res.data.message || 'Import hồ sơ sức khỏe thất bại');
     }
 
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) throw new Error('File không có sheet dữ liệu');
-    const ws = workbook.Sheets[sheetName];
-
-    // rows: mỗi phần tử là 1 dòng (bỏ header)
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    if (!rows.length) throw new Error('File không có dữ liệu');
-
-    // Map studentCode -> id cho lớp này
-    const students = await loadStudentsByClass(classId);
-    const codeMap = new Map();
-    for (const s of students) {
-        const key = String(s.studentCode).trim().toUpperCase();
-        if (key) codeMap.set(key, s.id);
-    }
-
-    let success = 0;
-    let failed = 0;
-    let skipped = 0;
-    const errors = [];
-
-    for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const excelRowNumber = i + 2; // header = dòng 1
-
-        // đọc theo nhiều tên cột khác nhau (tiếng Việt / tiếng Anh)
-        let studentCode = getCell(r, ['Mã học sinh', 'maHocSinh', 'studentCode', 'Mã HS', 'Ma HS']);
-        studentCode = String(studentCode || '').trim();
-
-        // DÒNG DEMO: mã bắt đầu bằng "VD_" -> bỏ qua, không lỗi
-        if (studentCode.startsWith('VD_')) {
-            skipped++;
-            if (typeof onProgress === 'function') {
-                onProgress(Math.round(((i + 1) * 100) / rows.length));
-            }
-            continue;
-        }
-
-        const weightKg = getCell(r, ['Cân nặng (kg)', 'canNangKg', 'weightKg', 'weight']);
-        const heightCm = getCell(r, ['Chiều cao (cm)', 'chieuCaoCm', 'heightCm', 'height']);
-
-        // Nếu không có mã học sinh → bỏ qua, KHÔNG lỗi
-        if (!studentCode) {
-            skipped++;
-            if (typeof onProgress === 'function') {
-                onProgress(Math.round(((i + 1) * 100) / rows.length));
-            }
-            continue;
-        }
-
-        // Nếu thiếu cả cân nặng & chiều cao → bỏ qua, KHÔNG lỗi
-        if (weightKg === '' && heightCm === '') {
-            skipped++;
-            if (typeof onProgress === 'function') {
-                onProgress(Math.round(((i + 1) * 100) / rows.length));
-            }
-            continue;
-        }
-
-        const codeKey = studentCode.toUpperCase();
-        const studentId = codeMap.get(codeKey);
-
-        // Không tìm thấy học sinh theo mã → coi là failed (dữ liệu sai mã)
-        if (!studentId) {
-            failed++;
-            errors.push(`Dòng ${excelRowNumber}: không tìm thấy học sinh với mã '${studentCode}' trong lớp.`);
-            if (typeof onProgress === 'function') {
-                onProgress(Math.round(((i + 1) * 100) / rows.length));
-            }
-            continue;
-        }
-
-        const ageInMonths = getCell(r, ['Tuổi (tháng)', 'tuoiThang', 'ageInMonths', 'age_months']);
-        const nutritionStatus = getCell(r, ['Tình trạng dinh dưỡng', 'tinhTrangDinhDuong', 'nutritionStatus', 'nutrition']);
-        const bloodType = getCell(r, ['Nhóm máu', 'nhomMau', 'bloodType']);
-        const knowsSwimming = parseBool(getCell(r, ['Biết bơi', 'bietBoi', 'knowsSwimming']));
-        const eyeIssue = parseBool(getCell(r, ['Vấn đề mắt', 'vanDeMat', 'eyeIssue']));
-        const dentalIssue = parseBool(getCell(r, ['Vấn đề răng miệng', 'vanDeRangMieng', 'dentalIssue']));
-        const note = getCell(r, ['Ghi chú', 'ghiChu', 'note']);
-
-        const payload = {
-            studentId,
-            classId,
-            recordYear,
-            recordMonth,
-            ageInMonths: ageInMonths || null,
-            weightKg: weightKg || null,
-            heightCm: heightCm || null,
-            nutritionStatus: nutritionStatus || '',
-            bloodType: bloodType || '',
-            knowsSwimming,
-            eyeIssue,
-            dentalIssue,
-            note: note || ''
-        };
-
-        try {
-            const url = withApiV1('/health-records/create');
-            await http.post(url, payload, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json'
-                }
-            });
-            success++;
-        } catch (e) {
-            failed++;
-            errors.push(`Dòng ${excelRowNumber}: ${extractErrorMessage(e, 'Tạo hồ sơ thất bại')}`);
-        }
-
-        if (typeof onProgress === 'function') {
-            onProgress(Math.round(((i + 1) * 100) / rows.length));
-        }
-    }
-
-    return {
-        total: rows.length,
-        success,
-        failed,
-        skipped,
-        errors
-    };
+    const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
+    return raw; // giữ nguyên DTO cho màn import result
 }
+
+/**
+ * Export dữ liệu 1 lớp, 1 năm/tháng ra Excel
+ * GET /health-records/class/{classId}/export?year=&month=
+ */
+export async function exportHealthRecordsToExcel({ classId, year, month }) {
+    const url = withApiV1(`/health-records/class/${classId}/export`);
+    const res = await http.get(url, {
+        params: { year, month },
+        responseType: 'blob'
+    });
+    return res.data; // Blob
+}
+
+/* default export (tuỳ chọn) */
+export default {
+    fetchAllHealthRecords,
+    fetchHealthRecordById,
+    fetchHealthRecordsByStudent,
+    fetchHealthRecordsByClass,
+    fetchHealthRecordsByClassAndPeriodFE,
+    searchHealthRecords,
+    createHealthRecord,
+    updateHealthRecord,
+    deleteHealthRecord,
+    calculateBMI,
+    downloadHealthRecordTemplate,
+    importHealthRecordsFromExcel,
+    exportHealthRecordsToExcel
+};

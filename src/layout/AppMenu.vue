@@ -44,7 +44,9 @@ const model = ref([
             { label: 'Y tế', icon: 'fa-solid fa-notes-medical', to: '/school/healthrecord' },
             { label: 'Album', icon: 'fa-solid fa-image', to: '/school/album-manager' },
             { label: 'Bài viết', icon: 'fa-solid fa-pen-to-square', to: '/school/new-list' },
-            { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/school/feedback-inbox' }
+            { label: 'Đợt thu', icon: 'fa-solid fa-money-bill', to: '/school/finance/fee' },
+            { label: 'Hòm thư góp ý', icon: 'fa-solid fa-envelope', to: '/school/feedback-inbox' },
+
         ]
     },
 
@@ -54,7 +56,6 @@ const model = ref([
         items: [
             { label: 'Thiết lập', icon: 'fa-solid fa-gear', to: '/finance/settings' },
             { label: 'Thông tin nhập học', icon: 'fa-solid fa-user-check', to: '/finance/admissions' },
-            { label: 'Đợt thu', icon: 'fa-solid fa-money-bill', to: '/finance/collect' }
         ]
     },
 
@@ -62,10 +63,10 @@ const model = ref([
     {
         label: 'Báo cáo & Thống kê',
         items: [
-            { label: 'Báo cáo điểm danh', icon: 'fa-solid fa-file-lines', to: '/reports/attendance' },
-            { label: 'Báo cáo trông muộn', icon: 'fa-solid fa-file-circle-exclamation', to: '/reports/late' },
+            { label: 'Báo cáo điểm danh', icon: 'fa-solid fa-file-lines', to: '/school/report/attendance' },
+            // { label: 'Báo cáo trông muộn', icon: 'fa-solid fa-file-circle-exclamation', to: '/reports/late' },
             { label: 'Báo cáo thôi học', icon: 'fa-solid fa-file-circle-minus', to: '/reports/quit' },
-            { label: 'Báo cáo bảo lưu', icon: 'fa-solid fa-file-circle-plus', to: '/reports/suspend' },
+            // { label: 'Báo cáo bảo lưu', icon: 'fa-solid fa-file-circle-plus', to: '/reports/suspend' },
             { label: 'Báo cáo khác', icon: 'fa-solid fa-file-circle-question', to: '/reports/others' },
             { label: 'Nhật ký hoạt động', icon: 'fa-solid fa-list', to: '/reports/logs' }
         ]

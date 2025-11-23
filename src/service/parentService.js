@@ -1,13 +1,11 @@
 // src/service/parentService.js
 import http from '@/service/http.js';
 
-/** Map BE -> FE */
+/** Map BE -> FE 1 dòng phụ huynh */
 function mapParentRow(p) {
     const statusStr = p.status || '';
-    const statusKey =
-        statusStr.includes('khóa') || statusStr.toLowerCase().includes('lock')
-            ? 'blocked'
-            : 'active';
+    const lower = statusStr.toLowerCase();
+    const statusKey = lower.includes('khóa') || lower.includes('lock') ? 'blocked' : 'active';
 
     return {
         id: p.id,
@@ -19,7 +17,8 @@ function mapParentRow(p) {
         studentNames: Array.isArray(p.studentNames) ? p.studentNames : [],
         status: statusStr || (statusKey === 'blocked' ? 'Đã khóa' : 'Hoạt động'),
         statusKey,
-        // để sẵn, nếu sau này BE trả thêm
+
+        // sẵn chỗ nếu BE trả thêm
         occupation: p.occupation,
         relationship: p.relationship,
         emergencyContact: p.emergencyContact,
@@ -27,7 +26,7 @@ function mapParentRow(p) {
     };
 }
 
-/** FE filter/sort/paginate */
+/** FE filter/sort/paginate trên mảng đã map */
 function applyFilters(list, params = {}) {
     let items = [...list];
 
@@ -54,7 +53,9 @@ function applyFilters(list, params = {}) {
             if (va == null && vb == null) return 0;
             if (va == null) return -1 * mul;
             if (vb == null) return 1 * mul;
-            if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * mul;
+            if (typeof va === 'number' && typeof vb === 'number') {
+                return (va - vb) * mul;
+            }
             return String(va).localeCompare(String(vb), 'vi') * mul;
         });
     }
@@ -75,7 +76,7 @@ function applyFilters(list, params = {}) {
     return { items, total, counts };
 }
 
-/** GET all parents */
+/** GET /parents/all */
 export async function fetchParents(params = {}) {
     const res = await http.get('/parents/all');
     const raw = Array.isArray(res?.data?.data)
@@ -87,14 +88,14 @@ export async function fetchParents(params = {}) {
     return applyFilters(mapped, params);
 }
 
-/** GET 1 phụ huynh theo id (BE: /parents/find/{id}) */
+/** GET /parents/find/{id} */
 export async function getParentById(id) {
     const res = await http.get(`/parents/find/${id}`);
     return res?.data?.data || res?.data;
 }
 
-/** Tạo phụ huynh (BE: POST /auth/register/parent)
- * payload phải đúng ParentRequest:
+/** POST /auth/register/parent – tạo phụ huynh mới
+ * payload theo ParentRequest:
  * {
  *   username, password, fullName, email, phone,
  *   dateOfBirth, gender, occupation, relationship,
@@ -103,11 +104,11 @@ export async function getParentById(id) {
  */
 export async function createParent(payload) {
     const res = await http.post('/auth/register/parent', payload);
-    // BE trả String "Đăng ký tài khoản phụ huynh thành công!"
+    // BE hiện trả String: "Đăng ký tài khoản phụ huynh thành công!"
     return res?.data;
 }
 
-/** Khóa tài khoản phụ huynh (BE: PATCH /parents/{id}/block) */
+/** PATCH /parents/{id}/block */
 export async function blockParents(ids = []) {
     for (const id of ids) {
         await http.patch(`/parents/${id}/block`);
@@ -115,7 +116,7 @@ export async function blockParents(ids = []) {
     return true;
 }
 
-/** Mở khóa tài khoản phụ huynh (BE: PATCH /parents/{id}/unblock) */
+/** PATCH /parents/{id}/unblock */
 export async function unblockParents(ids = []) {
     for (const id of ids) {
         await http.patch(`/parents/${id}/unblock`);
@@ -123,7 +124,7 @@ export async function unblockParents(ids = []) {
     return true;
 }
 
-/** Import phụ huynh từ Excel (BE: POST /parents/import) */
+/** POST /parents/import – import Excel */
 export async function importParentsFromExcel(file) {
     const formData = new FormData();
     formData.append('file', file);
@@ -138,7 +139,7 @@ export async function importParentsFromExcel(file) {
     return res?.data;
 }
 
-/** Export Excel; fallback CSV có BOM nếu chưa có /parents/export */
+/** Export Excel; nếu BE chưa có /parents/export thì fallback CSV */
 export async function exportParentsExcel() {
     try {
         const res = await http.get('/parents/export', { responseType: 'blob' });
@@ -156,7 +157,7 @@ export async function exportParentsExcel() {
         a.remove();
         URL.revokeObjectURL(url);
     } catch {
-        // Fallback CSV
+        // Fallback CSV nếu BE chưa làm export
         const { items } = await fetchParents({ page: 1, size: 100000 });
         const header = 'id,fullName,username,phone,email,status\n';
         const csv = (v) => {
@@ -182,18 +183,66 @@ export async function exportParentsExcel() {
     }
 }
 
-/** Những API BE chưa có → báo lỗi rõ ràng */
+/** ==== Các API cho mobile/parent app (nếu dùng) ==== */
 
-/** Update theo ID cho admin: BE chưa support */
-export async function updateParent(id, payload) {
-    throw new Error('API cập nhật phụ huynh theo ID chưa được BE hỗ trợ.');
+/** PUT /parents/profile – parent tự cập nhật bằng token */
+export async function updateParentProfile(payload) {
+    const res = await http.put('/parents/profile', payload);
+    return res?.data;
 }
 
-/** Xóa phụ huynh: BE chưa support */
+/** GET /parents/{parentId}/children */
+export async function getParentChildren(parentId) {
+    const res = await http.get(`/parents/${parentId}/children`);
+    return res?.data?.data || res?.data;
+}
+
+/** GET /parents/{parentId}/children/{studentId} */
+export async function getParentChild(parentId, studentId) {
+    const res = await http.get(`/parents/${parentId}/children/${studentId}`);
+    return res?.data?.data || res?.data;
+}
+
+/** GET /parents/{parentId}/children/{studentId}/attendance */
+export async function getParentChildAttendance(parentId, studentId, startDate, endDate) {
+    const res = await http.get(`/parents/${parentId}/children/${studentId}/attendance`, {
+        params: { startDate, endDate } // format dd-MM-yyyy theo BE
+    });
+    return res?.data?.data || res?.data;
+}
+
+/** GET /parents/{parentId}/children/{studentId}/menus */
+export async function getParentChildMenus(parentId, studentId, startDate, endDate) {
+    const res = await http.get(`/parents/${parentId}/children/${studentId}/menus`, {
+        params: { startDate, endDate }
+    });
+    return res?.data?.data || res?.data;
+}
+
+/** GET /parents/{parentId}/children/{studentId}/albums */
+export async function getParentChildAlbums(parentId, studentId) {
+    const res = await http.get(`/parents/${parentId}/children/${studentId}/albums`);
+    return res?.data?.data || res?.data;
+}
+
+/** GET /parents/{parentId}/children/{studentId}/albums/{albumId} */
+export async function getParentChildAlbumDetail(parentId, studentId, albumId) {
+    const res = await http.get(
+        `/parents/${parentId}/children/${studentId}/albums/${albumId}`
+    );
+    return res?.data?.data || res?.data;
+}
+
+/** Những API BE chưa có → báo lỗi rõ ràng (delete) */
 export async function deleteParents(ids = []) {
     throw new Error('API xóa phụ huynh chưa được BE hỗ trợ.');
 }
 
-/** Alias cho code cũ (lock/unlock) */
+/** Stub updateParent để tránh lỗi import từ code cũ (admin update theo ID) */
+export async function updateParent(id, payload) {
+    throw new Error('API cập nhật phụ huynh theo ID chưa được BE hỗ trợ.');
+}
+
+/** Alias cho code cũ (lock/unlock) để màn list dùng */
 export const lockParents = blockParents;
 export const unlockParents = unblockParents;
