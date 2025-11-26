@@ -68,9 +68,18 @@ function onView() {
     editing.value = activeRow.value;
     showUpsert.value = true;
 }
-async function onAfterUpsert() {
+async function onAfterUpsert(payload) {
+    // Đóng modal trước để tránh toast nằm phía sau
     showUpsert.value = false;
+
+    // Reload lại list
     await load(false);
+
+    // Thông báo thành công
+    await swalToast.fire({
+        icon: 'success',
+        title: payload?.id ? 'Cập nhật phụ huynh thành công' : 'Thêm phụ huynh thành công'
+    });
 }
 
 /* =================== IMPORT EXCEL MODAL =================== */
@@ -397,23 +406,31 @@ async function uploadExcel() {
             `;
         }
 
+        // HẾT LOADING + RESET INPUT TRƯỚC
+        importLoading.value = false;
+        if (fileInputRef.value) fileInputRef.value.value = '';
+
+        // ĐÓNG MODAL TRƯỚC ĐỂ Swal KHÔNG BỊ CHE
+        closeImportModal();
+
+        // Rồi mới hiển thị SweetAlert kết quả
         await Swal.fire({
             icon: apiStatus === 200 && successCount > 0 ? 'success' : 'warning',
             title: apiMsg,
             html
         });
 
-        closeImportModal();
+        // Reload lại danh sách phụ huynh
         await load(false);
     } catch (err) {
+        importLoading.value = false;
+        if (fileInputRef.value) fileInputRef.value.value = '';
+
         await Swal.fire({
             icon: 'error',
             title: 'Import phụ huynh thất bại',
             text: err?.message || 'Đã xảy ra lỗi khi import'
         });
-    } finally {
-        importLoading.value = false;
-        if (fileInputRef.value) fileInputRef.value.value = '';
     }
 }
 
@@ -561,7 +578,7 @@ onMounted(() => load(true));
         <!-- Modal thêm / sửa / xem phụ huynh -->
         <ParentUpsertModal v-model:modelValue="showUpsert" :parent="editing" @saved="onAfterUpsert" />
 
-        <!-- ============ IMPORT EXCEL MODAL (NHƯ VIEW HỌC SINH) ============ -->
+        <!-- ============ IMPORT EXCEL MODAL ============ -->
         <Dialog v-model:visible="showImportModal" modal header="Nhập danh sách phụ huynh" :style="{ width: '650px', maxWidth: '95vw' }" :breakpoints="{ '960px': '90vw', '640px': '95vw' }">
             <div class="space-y-4">
                 <!-- Khu vực kéo thả -->
@@ -584,12 +601,7 @@ onMounted(() => load(true));
 
                 <!-- Hướng dẫn cột -->
                 <div class="text-xs text-slate-600">
-                    <div class="font-semibold mb-1">Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):</div>
                     <textarea class="w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50" rows="2" readonly>{{ requiredColsText }}</textarea>
-                    <div class="mt-1 text-[11px] text-slate-500">
-                        - Ngày sinh hỗ trợ các định dạng: <code>dd-MM-yyyy</code>, <code>dd/MM/yyyy</code>, <code>yyyy-MM-dd</code>.<br />
-                        - Sheet <strong>DuLieu</strong>: dữ liệu thật để import. Sheet <strong>Vi_du</strong> chỉ là ví dụ, không lưu vào DB.
-                    </div>
                 </div>
 
                 <!-- Buttons -->
@@ -717,7 +729,7 @@ onMounted(() => load(true));
     color: #64748b;
 }
 
-/* Import modal styles (giống view học sinh) */
+/* Import modal styles */
 .import-dropzone {
     border: 2px dashed #cbd5e1;
     border-radius: 12px;

@@ -14,20 +14,13 @@ import ConfirmDialog from 'primevue/confirmdialog';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
-import {
-    fetchClasses,
-    exportClassesExcel,
-    createClass,
-    updateClass,
-    deleteClass,
-    fetchClassById
-} from '@/service/classService.js';
+import { fetchClasses, exportClassesExcel, createClass, updateClass, deleteClass, fetchClassById } from '@/service/classService.js';
 import { fetchTeachersLite } from '@/service/teacherService.js';
 
 const toast = useToast();
 const confirm = useConfirm();
 
-/* Top filters */
+/* =================== FILTER TOP & HEADER =================== */
 const years = ref([
     { label: 'Tất cả năm học', value: '' },
     { label: '2025 - 2026', value: '2025-2026' },
@@ -41,16 +34,19 @@ const fName = ref('');
 const fRoom = ref('');
 const fGrade = ref('');
 
-/* Table state */
+/* =================== BẢNG LỚP =================== */
 const loading = ref(false);
-const rows = ref([]);
+const rows = ref([]); // dữ liệu đang hiển thị theo trang
 const totalRecords = ref(0);
 const page = ref(1);
 const size = ref(10);
 const sortField = ref('');
 const sortOrder = ref(1);
 
-/* Row menu */
+/* Danh sách full tất cả lớp để check trùng GV, tên lớp, phòng học */
+const allClasses = ref([]);
+
+/* =================== ROW MENU =================== */
 const rowMenu = ref();
 const activeRow = ref(null);
 const rowMenuItems = ref([
@@ -77,20 +73,21 @@ const rowMenuItems = ref([
         command: () => onAction('delete')
     }
 ]);
+
 function openRowMenu(e, row) {
     activeRow.value = row;
     rowMenu.value.toggle(e);
 }
 
-/* Dialog state */
+/* =================== DIALOG STATE =================== */
 const showCreate = ref(false);
 const showEdit = ref(false);
 const showView = ref(false);
 
-/* Teacher options for dropdown */
+/* Giáo viên cho dropdown */
 const teacherOptions = ref([]);
 
-/* Create / Edit forms */
+/* Form tạo / sửa / xem */
 const createForm = ref({
     className: '',
     grade: '',
@@ -110,18 +107,125 @@ const viewData = ref(null);
 
 const totalClasses = computed(() => totalRecords.value);
 
-/* Load teachers for dropdown */
+/* =================== CẤU HÌNH KHỐI + TÊN LỚP + PHÒNG =================== */
+/* Khối lớp (chuẩn mầm non) */
+const gradeOptions = [
+    { label: 'Nhà trẻ', value: 'Nhà trẻ' },
+    { label: 'Mầm', value: 'Mầm' },
+    { label: 'Chồi', value: 'Chồi' },
+    { label: 'Lá', value: 'Lá' }
+];
+
+/* Tên lớp gợi ý theo từng khối */
+const baseClassNameOptions = {
+    'Nhà trẻ': ['Nhà trẻ 1', 'Nhà trẻ 2'],
+    Mầm: ['Mầm 1', 'Mầm 2', 'Mầm 3'],
+    Chồi: ['Chồi 1', 'Chồi 2'],
+    Lá: ['Lá 1', 'Lá 2']
+};
+
+/* Phòng học gợi ý theo từng khối (bạn có thể đổi lại tên phòng tuỳ trường) */
+const baseRoomOptions = {
+    'Nhà trẻ': ['P.NT01', 'P.NT02'],
+    Mầm: ['P.M01', 'P.M02', 'P.M03'],
+    Chồi: ['P.C01', 'P.C02'],
+    Lá: ['P.L01', 'P.L02']
+};
+
+/* =================== TÍNH CÁC GIÁ TRỊ ĐÃ DÙNG =================== */
+/* Tên lớp đã dùng (dựa trên allClasses) */
+const usedClassNames = computed(() => {
+    const s = new Set();
+    allClasses.value.forEach((c) => {
+        if (c.className) s.add(c.className);
+    });
+    return s;
+});
+
+/* Phòng học đã dùng */
+const usedRooms = computed(() => {
+    const s = new Set();
+    allClasses.value.forEach((c) => {
+        if (c.roomNumber) s.add(c.roomNumber);
+    });
+    return s;
+});
+
+/* Giáo viên đã là GVCN của 1 lớp nào đó */
+const usedTeacherNames = computed(() => {
+    const s = new Set();
+    allClasses.value.forEach((c) => {
+        if (c.teacherName && c.teacherName !== 'Chưa có giáo viên') {
+            s.add(c.teacherName);
+        }
+    });
+    return s;
+});
+
+/* Options TÊN LỚP cho modal Tạo lớp: theo khối + loại bỏ tên đã dùng */
+const classNameOptions = computed(() => {
+    const grade = createForm.value.grade;
+    if (!grade) return [];
+    const base = baseClassNameOptions[grade] || [];
+    return base.filter((name) => !usedClassNames.value.has(name)).map((name) => ({ label: name, value: name }));
+});
+
+/* Options PHÒNG HỌC cho modal Tạo lớp: theo khối + loại bỏ phòng đã dùng */
+const roomOptions = computed(() => {
+    const grade = createForm.value.grade;
+    if (!grade) return [];
+    const base = baseRoomOptions[grade] || [];
+    return base.filter((room) => !usedRooms.value.has(room)).map((room) => ({ label: room, value: room }));
+});
+
+/* Options giáo viên cho modal TẠO lớp: loại bỏ GV đã là GVCN lớp khác */
+const teacherOptionsForCreate = computed(() => {
+    if (!teacherOptions.value?.length) return [];
+    return teacherOptions.value.filter((t) => !usedTeacherNames.value.has(t.label));
+});
+
+/* Options giáo viên cho modal SỬA lớp:
+   - Cho phép giữ nguyên GV hiện tại của lớp
+   - Không cho chọn GV đã là GVCN lớp khác */
+const teacherOptionsForEdit = computed(() => {
+    if (!teacherOptions.value?.length) return [];
+    if (!editForm.value.id) {
+        // fallback giống Tạo mới
+        return teacherOptionsForCreate.value;
+    }
+    const usedExceptCurrent = new Set();
+    allClasses.value.forEach((c) => {
+        if (!c.teacherName || c.teacherName === 'Chưa có giáo viên') return;
+        if (c.id === editForm.value.id) return;
+        usedExceptCurrent.add(c.teacherName);
+    });
+    return teacherOptions.value.filter((t) => !usedExceptCurrent.has(t.label));
+});
+
+/* =================== LOAD DATA =================== */
 async function loadTeachers() {
     teacherOptions.value = await fetchTeachersLite();
 }
 
-/* Load classes */
+/* Lấy full danh sách lớp (không filter, không phân trang) để check trùng */
+async function reloadAllClasses() {
+    try {
+        const { items } = await fetchClasses({
+            page: 1,
+            size: 100000
+        });
+        allClasses.value = items;
+    } catch (e) {
+        console.warn('[Classes] Không tải được full danh sách lớp cho kiểm tra GV/tên/room:', e?.message || e);
+    }
+}
+
+/* Load danh sách lớp theo filter + phân trang để hiển thị bảng */
 async function load() {
     loading.value = true;
     try {
-        const sort = sortField.value
-            ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}`
-            : undefined;
+        const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
+
         const { items, total } = await fetchClasses({
             year: selectedYear.value?.value || undefined,
             className: fName.value || undefined,
@@ -167,7 +271,7 @@ async function onExport() {
     await exportClassesExcel();
 }
 
-/* Actions */
+/* =================== ACTIONS =================== */
 async function onAction(type) {
     const row = activeRow.value;
     if (!row) return;
@@ -188,13 +292,20 @@ async function onAction(type) {
     } else if (type === 'edit') {
         try {
             const c = await fetchClassById(row.id);
+            // Tìm teacherId tương ứng theo teacherName (nếu có)
+            let teacherId = null;
+            if (c.teacherName && c.teacherName !== 'Chưa có giáo viên') {
+                const opt = teacherOptions.value.find((t) => t.label === c.teacherName);
+                teacherId = opt ? opt.value : null;
+            }
+
             editForm.value = {
                 id: c.id,
                 className: c.className,
                 grade: c.grade,
                 roomNumber: c.roomNumber,
                 academicYear: c.academicYear,
-                teacherId: null // backend chỉ trả teacherName
+                teacherId
             };
             showEdit.value = true;
         } catch (e) {
@@ -228,7 +339,7 @@ function confirmDelete(row) {
                     detail: 'Đã xoá lớp học',
                     life: 2500
                 });
-                load();
+                await Promise.all([load(), reloadAllClasses()]);
             } catch (e) {
                 toast.add({
                     severity: 'error',
@@ -241,17 +352,44 @@ function confirmDelete(row) {
     });
 }
 
-/* Save create */
+/* =================== SAVE CREATE / EDIT =================== */
 async function saveCreate() {
-    if (!createForm.value.className) {
+    if (!createForm.value.grade || !createForm.value.className || !createForm.value.roomNumber) {
         toast.add({
             severity: 'warn',
             summary: 'Thiếu thông tin',
-            detail: 'Vui lòng nhập tên lớp',
+            detail: 'Vui lòng chọn khối lớp, tên lớp và phòng học',
             life: 2500
         });
         return;
     }
+
+    // Check: tên lớp đã dùng (phòng học đã dùng đã xử lý bằng dropdown)
+    if (usedClassNames.value.has(createForm.value.className)) {
+        toast.add({
+            severity: 'warn',
+            summary: 'Tên lớp đã tồn tại',
+            detail: `Lớp "${createForm.value.className}" đã tồn tại, vui lòng chọn tên khác`,
+            life: 3000
+        });
+        return;
+    }
+
+    // Check: giáo viên không được làm GVCN 2 lớp
+    if (createForm.value.teacherId) {
+        const opt = teacherOptions.value.find((t) => t.value === createForm.value.teacherId);
+        const teacherName = opt?.label;
+        if (teacherName && usedTeacherNames.value.has(teacherName)) {
+            toast.add({
+                severity: 'warn',
+                summary: 'Giáo viên đã được phân lớp',
+                detail: `Giáo viên "${teacherName}" đã là GVCN của một lớp khác.`,
+                life: 3000
+            });
+            return;
+        }
+    }
+
     try {
         await createClass(createForm.value);
         toast.add({
@@ -262,7 +400,7 @@ async function saveCreate() {
         });
         showCreate.value = false;
         resetCreateForm();
-        load();
+        await Promise.all([load(), reloadAllClasses()]);
     } catch (e) {
         toast.add({
             severity: 'error',
@@ -273,9 +411,45 @@ async function saveCreate() {
     }
 }
 
-/* Save edit */
 async function saveEdit() {
     if (!editForm.value.id) return;
+
+    // Check trùng tên lớp (nếu đổi tên)
+    const nameClash = allClasses.value.some((c) => c.id !== editForm.value.id && c.className === editForm.value.className);
+    if (nameClash) {
+        toast.add({
+            severity: 'warn',
+            summary: 'Tên lớp đã tồn tại',
+            detail: `Lớp "${editForm.value.className}" đã tồn tại, vui lòng chọn tên khác`,
+            life: 3000
+        });
+        return;
+    }
+
+    // Check giáo viên: không được là GVCN 2 lớp khác nhau
+    if (editForm.value.teacherId) {
+        const opt = teacherOptions.value.find((t) => t.value === editForm.value.teacherId);
+        const teacherName = opt?.label;
+        if (teacherName) {
+            const usedExceptCurrent = new Set();
+            allClasses.value.forEach((c) => {
+                if (!c.teacherName || c.teacherName === 'Chưa có giáo viên') return;
+                if (c.id === editForm.value.id) return;
+                usedExceptCurrent.add(c.teacherName);
+            });
+
+            if (usedExceptCurrent.has(teacherName)) {
+                toast.add({
+                    severity: 'warn',
+                    summary: 'Giáo viên đã được phân lớp',
+                    detail: `Giáo viên "${teacherName}" đã là GVCN của một lớp khác.`,
+                    life: 3000
+                });
+                return;
+            }
+        }
+    }
+
     try {
         await updateClass(editForm.value.id, editForm.value);
         toast.add({
@@ -285,7 +459,7 @@ async function saveEdit() {
             life: 2500
         });
         showEdit.value = false;
-        load();
+        await Promise.all([load(), reloadAllClasses()]);
     } catch (e) {
         toast.add({
             severity: 'error',
@@ -296,13 +470,13 @@ async function saveEdit() {
     }
 }
 
-/* Helpers */
+/* =================== HELPERS =================== */
 function resetCreateForm() {
     createForm.value = {
         className: '',
         grade: '',
         roomNumber: '',
-        academicYear: '',
+        academicYear: selectedYear.value?.value || '',
         teacherId: null
     };
 }
@@ -322,16 +496,14 @@ watch([fName, fRoom, fGrade, selectedYear], () =>
 
 onMounted(async () => {
     await Promise.all([load(), loadTeachers()]);
+    await reloadAllClasses();
 });
 </script>
 
 <template>
     <div class="space-y-4 px-4 md:px-6 lg:px-8 py-5 relative">
-        <!-- Loading overlay kiểu feedback -->
-        <div
-            v-if="loading"
-            class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"
-        >
+        <!-- Loading overlay -->
+        <div v-if="loading" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
             <i class="fa-solid fa-spinner fa-spin mr-2"></i>
             Đang tải dữ liệu lớp...
         </div>
@@ -339,23 +511,13 @@ onMounted(async () => {
         <ConfirmDialog />
 
         <!-- Header -->
-        <div
-            class="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-        >
+        <div class="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h1 class="text-xl font-semibold text-slate-800">Lớp học</h1>
-                <p class="text-sm text-slate-500 mt-1">
-                    Quản lý danh sách lớp, giáo viên chủ nhiệm và phòng học trong năm học.
-                </p>
+                <p class="text-sm text-slate-500 mt-1">Quản lý danh sách lớp, giáo viên chủ nhiệm và phòng học trong năm học.</p>
             </div>
             <div class="flex items-center gap-2">
-                <Dropdown
-                    v-model="selectedYear"
-                    :options="years"
-                    optionLabel="label"
-                    placeholder="Năm học"
-                    class="w-44"
-                />
+                <Dropdown v-model="selectedYear" :options="years" optionLabel="label" placeholder="Năm học" class="w-44" />
                 <Button
                     class="!bg-primary !border-0 !text-white"
                     icon="fa-solid fa-plus mr-2"
@@ -367,12 +529,7 @@ onMounted(async () => {
                         }
                     "
                 />
-                <Button
-                    class="!bg-emerald-600 !border-0 !text-white"
-                    icon="fa-solid fa-file-arrow-down mr-2"
-                    label="Xuất Excel"
-                    @click="onExport"
-                />
+                <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Xuất Excel" @click="onExport" />
             </div>
         </div>
 
@@ -388,14 +545,7 @@ onMounted(async () => {
 
         <!-- Table -->
         <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
-            <DataTable
-                :value="rows"
-                :loading="false"
-                dataKey="id"
-                responsiveLayout="scroll"
-                :rowHover="true"
-                class="p-datatable-sm"
-            >
+            <DataTable :value="rows" :loading="false" dataKey="id" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
                 <Column header="#" :body="(_, opt) => opt.rowIndex + 1" headerStyle="width: 4rem" />
 
                 <!-- Tên lớp + mã -->
@@ -403,11 +553,7 @@ onMounted(async () => {
                     <template #header>
                         <div class="header-filter nowrap">
                             <InputText v-model="fName" class="w-full" placeholder="Tìm theo tên lớp" />
-                            <button
-                                class="sort-btn"
-                                @click="onSort('className')"
-                                title="Sắp xếp theo tên"
-                            >
+                            <button class="sort-btn" @click="onSort('className')" title="Sắp xếp theo tên">
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
@@ -424,13 +570,8 @@ onMounted(async () => {
                     </template>
                 </Column>
 
-                <!-- Phòng học -->
-                <Column headerStyle="min-width: 120px">
-                    <template #header>
-                        <div class="header-filter nowrap">
-                            <InputText v-model="fRoom" class="w-full" placeholder="Phòng học" />
-                        </div>
-                    </template>
+                <!-- Phòng học (chỉ hiển thị, không filter) -->
+                <Column header="Phòng học" headerStyle="min-width: 120px">
                     <template #body="{ data }">
                         <span class="ellipsis" :title="data.roomNumber">
                             {{ data.roomNumber || '-' }}
@@ -443,11 +584,7 @@ onMounted(async () => {
                     <template #header>
                         <div class="header-filter nowrap">
                             <InputText v-model="fGrade" class="w-full" placeholder="Khối lớp" />
-                            <button
-                                class="sort-btn"
-                                @click="onSort('grade')"
-                                title="Sắp xếp theo khối"
-                            >
+                            <button class="sort-btn" @click="onSort('grade')" title="Sắp xếp theo khối">
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
@@ -478,12 +615,10 @@ onMounted(async () => {
                 </Column>
 
                 <!-- Số HS -->
-                <Column header="Số HS" headerStyle="width:120px">
+                <Column header="Học sinh" headerStyle="width:120px">
                     <template #body="{ data }">
                         <span class="font-semibold">{{ data.studentCurrent }}</span>
-                        <span v-if="data.studentCapacity !== null">
-                            /{{ data.studentCapacity }}
-                        </span>
+                        <span v-if="data.studentCapacity !== null"> /{{ data.studentCapacity }} </span>
                     </template>
                 </Column>
 
@@ -495,39 +630,20 @@ onMounted(async () => {
                 </Column>
 
                 <!-- Hành động -->
-                <Column
-                    header="Hành động"
-                    headerStyle="width:64px; text-align:right;"
-                    bodyStyle="text-align:right;"
-                >
+                <Column header="Hành động" headerStyle="width:64px; text-align:right;" bodyStyle="text-align:right;">
                     <template #body="{ data }">
-                        <Button
-                            icon="fa-solid fa-ellipsis-vertical"
-                            class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100"
-                            @click="(e) => openRowMenu(e, data)"
-                        />
+                        <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => openRowMenu(e, data)" />
                     </template>
                 </Column>
             </DataTable>
 
             <div class="border-t border-slate-200">
-                <Paginator
-                    :rows="size"
-                    :totalRecords="totalRecords"
-                    :rowsPerPageOptions="[10, 20, 50]"
-                    @page="onChangePage"
-                />
+                <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[10, 20, 50]" @page="onChangePage" />
             </div>
         </div>
 
-        <!-- Row menu đẹp -->
-        <Menu
-            ref="rowMenu"
-            :model="rowMenuItems"
-            :popup="true"
-            appendTo="body"
-            :pt="{ menu: { class: 'rowmenu-panel' } }"
-        >
+        <!-- Row menu -->
+        <Menu ref="rowMenu" :model="rowMenuItems" :popup="true" appendTo="body" :pt="{ menu: { class: 'rowmenu-panel' } }">
             <template #item="{ item, props }">
                 <div v-if="item.separator" class="rowmenu-sep"></div>
                 <button
@@ -555,67 +671,50 @@ onMounted(async () => {
         </Menu>
 
         <!-- Dialog tạo lớp -->
-        <Dialog
-            v-model:visible="showCreate"
-            header="Tạo lớp học mới"
-            modal
-            :style="{ width: '520px' }"
-        >
+        <Dialog v-model:visible="showCreate" header="Tạo lớp học mới" modal :style="{ width: '520px' }">
             <div class="space-y-3">
-                <div>
-                    <label class="field-label">
-                        Tên lớp <span class="text-red-500">*</span>
-                    </label>
-                    <InputText v-model="createForm.className" class="w-full" />
-                </div>
+                <!-- Khối lớp + Tên lớp -->
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="field-label">Khối lớp</label>
-                        <InputText v-model="createForm.grade" class="w-full" />
+                        <label class="field-label"> Khối lớp <span class="text-red-500">*</span> </label>
+                        <Dropdown v-model="createForm.grade" :options="gradeOptions" optionLabel="label" optionValue="value" placeholder="Chọn khối lớp" class="w-full" />
                     </div>
                     <div>
-                        <label class="field-label">Phòng học</label>
-                        <InputText v-model="createForm.roomNumber" class="w-full" />
+                        <label class="field-label"> Tên lớp <span class="text-red-500">*</span> </label>
+                        <Dropdown v-model="createForm.className" :options="classNameOptions" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn tên lớp" class="w-full" />
                     </div>
                 </div>
-                <div>
-                    <label class="field-label">Năm học</label>
-                    <InputText
-                        v-model="createForm.academicYear"
-                        placeholder="VD: 2025-2026"
-                        class="w-full"
-                    />
+
+                <!-- Phòng học + Năm học -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="field-label"> Phòng học <span class="text-red-500">*</span> </label>
+                        <Dropdown v-model="createForm.roomNumber" :options="roomOptions" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn phòng học" class="w-full" />
+                    </div>
+                    <div>
+                        <label class="field-label">Năm học</label>
+                        <InputText v-model="createForm.academicYear" placeholder="VD: 2025-2026" class="w-full" />
+                    </div>
                 </div>
+
+                <p class="text-xs text-slate-500">Gợi ý tên lớp và phòng học theo chuẩn trường mầm non. Những tên lớp / phòng đã dùng sẽ được ẩn khỏi danh sách.</p>
+
+                <!-- GVCN -->
                 <div>
                     <label class="field-label">Giáo viên chủ nhiệm</label>
-                    <Dropdown
-                        v-model="createForm.teacherId"
-                        :options="teacherOptions"
-                        optionLabel="label"
-                        optionValue="value"
-                        showClear
-                        placeholder="Chọn giáo viên"
-                        class="w-full"
-                    />
+                    <Dropdown v-model="createForm.teacherId" :options="teacherOptionsForCreate" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên" class="w-full" />
+                    <p class="text-xs text-slate-500 mt-1">Một giáo viên chỉ được làm GVCN của tối đa <b>1 lớp</b>.</p>
                 </div>
+
                 <div class="flex justify-end gap-2 pt-2">
                     <Button label="Huỷ" class="p-button-text" @click="showCreate = false" />
-                    <Button
-                        label="Lưu"
-                        class="!bg-primary !border-0 !text-white"
-                        @click="saveCreate"
-                    />
+                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveCreate" />
                 </div>
             </div>
         </Dialog>
 
         <!-- Dialog sửa lớp -->
-        <Dialog
-            v-model:visible="showEdit"
-            header="Chỉnh sửa lớp học"
-            modal
-            :style="{ width: '520px' }"
-        >
+        <Dialog v-model:visible="showEdit" header="Chỉnh sửa lớp học" modal :style="{ width: '520px' }">
             <div v-if="editForm.id" class="space-y-3">
                 <div>
                     <label class="field-label">Tên lớp</label>
@@ -637,50 +736,26 @@ onMounted(async () => {
                 </div>
                 <div>
                     <label class="field-label">Giáo viên chủ nhiệm</label>
-                    <Dropdown
-                        v-model="editForm.teacherId"
-                        :options="teacherOptions"
-                        optionLabel="label"
-                        optionValue="value"
-                        showClear
-                        placeholder="Chọn giáo viên"
-                        class="w-full"
-                    />
+                    <Dropdown v-model="editForm.teacherId" :options="teacherOptionsForEdit" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên" class="w-full" />
+                    <p class="text-xs text-slate-500 mt-1">Không cho phép chọn giáo viên đã là GVCN lớp khác.</p>
                 </div>
                 <div class="flex justify-end gap-2 pt-2">
                     <Button label="Huỷ" class="p-button-text" @click="showEdit = false" />
-                    <Button
-                        label="Lưu"
-                        class="!bg-primary !border-0 !text-white"
-                        @click="saveEdit"
-                    />
+                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveEdit" />
                 </div>
             </div>
         </Dialog>
 
         <!-- Dialog xem lớp -->
-        <Dialog
-            v-model:visible="showView"
-            header="Thông tin lớp học"
-            modal
-            :style="{ width: '480px' }"
-        >
+        <Dialog v-model:visible="showView" header="Thông tin lớp học" modal :style="{ width: '480px' }">
             <div v-if="viewData" class="space-y-2">
                 <div class="mb-2">
                     <div class="text-lg font-semibold text-slate-800">{{ viewData.className }}</div>
-                    <div v-if="viewData.classCode" class="text-sm text-slate-500">
-                        Mã lớp: {{ viewData.classCode }}
-                    </div>
+                    <div v-if="viewData.classCode" class="text-sm text-slate-500">Mã lớp: {{ viewData.classCode }}</div>
                 </div>
-                <div>
-                    <span class="font-medium">Khối lớp:</span> {{ viewData.grade || '-' }}
-                </div>
-                <div>
-                    <span class="font-medium">Phòng học:</span> {{ viewData.roomNumber || '-' }}
-                </div>
-                <div>
-                    <span class="font-medium">Năm học:</span> {{ viewData.academicYear || '-' }}
-                </div>
+                <div><span class="font-medium">Khối lớp:</span> {{ viewData.grade || '-' }}</div>
+                <div><span class="font-medium">Phòng học:</span> {{ viewData.roomNumber || '-' }}</div>
+                <div><span class="font-medium">Năm học:</span> {{ viewData.academicYear || '-' }}</div>
                 <div>
                     <span class="font-medium">Giáo viên chủ nhiệm:</span>
                     {{ viewData.teacherName }}
@@ -688,9 +763,7 @@ onMounted(async () => {
                 <div>
                     <span class="font-medium">Số học sinh:</span>
                     {{ viewData.studentCurrent }}
-                    <span v-if="viewData.studentCapacity !== null">
-                        / {{ viewData.studentCapacity }}
-                    </span>
+                    <span v-if="viewData.studentCapacity !== null"> / {{ viewData.studentCapacity }} </span>
                 </div>
             </div>
         </Dialog>

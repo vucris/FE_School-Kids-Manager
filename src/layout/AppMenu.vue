@@ -16,9 +16,9 @@ const model = ref([
         label: 'Quản lý chung',
         items: [
             { label: 'Thông tin nhà trường', icon: 'fa-solid fa-building', to: '/school/info' },
-            { label: 'Cấu hình', icon: 'fa-solid fa-gear', to: '/school/settings' },
-            { label: 'Năm học', icon: 'fa-solid fa-calendar-days', to: '/school/year' },
-            { label: 'Cấp quản lý', icon: 'fa-solid fa-layer-group', to: '/school/levels' },
+            // { label: 'Cấu hình', icon: 'fa-solid fa-gear', to: '/school/settings' },
+            // { label: 'Năm học', icon: 'fa-solid fa-calendar-days', to: '/school/year' },
+            // { label: 'Cấp quản lý', icon: 'fa-solid fa-layer-group', to: '/school/levels' },
             { label: 'Lớp học', icon: 'fa-solid fa-trophy', to: '/school/class' }
         ]
     },
@@ -51,13 +51,13 @@ const model = ref([
     },
 
     // === TÀI CHÍNH ===
-    {
-        label: 'Tài chính',
-        items: [
-            { label: 'Thiết lập', icon: 'fa-solid fa-gear', to: '/finance/settings' },
-            { label: 'Thông tin nhập học', icon: 'fa-solid fa-user-check', to: '/finance/admissions' },
-        ]
-    },
+    // {
+    //     label: 'Tài chính',
+    //     items: [
+    //         { label: 'Thiết lập', icon: 'fa-solid fa-gear', to: '/finance/settings' },
+    //         { label: 'Thông tin nhập học', icon: 'fa-solid fa-user-check', to: '/finance/admissions' },
+    //     ]
+    // },
 
     // === BÁO CÁO & THỐNG KÊ ===
     {

@@ -1,3 +1,4 @@
+// src/service/classService.js
 import http from '@/service/http.js';
 
 /* ---------------- Helpers chung ---------------- */
@@ -21,6 +22,10 @@ function mapClassRow(c) {
         studentCapacity: c.studentCapacity ?? null,
         status: c.status || 'active'
     };
+
+
+
+
 }
 
 /* ---------------- CSV helper ---------------- */
@@ -83,7 +88,7 @@ function extractErrorMessage(err, fallback = 'Lỗi không xác định') {
     return err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
 }
 
-/* ---------------- API chính theo backend bạn gửi ---------------- */
+/* ---------------- API chính theo backend ---------------- */
 
 /* GET /classes/all */
 export async function fetchClasses(params = {}) {
@@ -173,7 +178,7 @@ export async function deleteClass(id) {
     }
 }
 
-/* GET /classes/all lite -> dropdown đơn giản */
+/* GET /classes/all lite -> dropdown đơn giản (CreateStudent, Album, ...) */
 export async function fetchClassesLite() {
     try {
         const url = withApiV1('/classes/all');
@@ -208,14 +213,10 @@ export async function exportClassesExcel() {
         a.remove();
         URL.revokeObjectURL(dlUrl);
     } catch (err) {
-        // fallback CSV
+        // fallback CSV nếu BE chưa có export
         const { items } = await fetchClasses({ page: 1, size: 100000 });
         const header = 'id,className,classCode,grade,roomNumber,academicYear,teacherName\n';
-        const body = items
-            .map((c) =>
-                [csv(c.id), csv(c.className), csv(c.classCode), csv(c.grade), csv(c.roomNumber), csv(c.academicYear), csv(c.teacherName)].join(',')
-            )
-            .join('\n');
+        const body = items.map((c) => [csv(c.id), csv(c.className), csv(c.classCode), csv(c.grade), csv(c.roomNumber), csv(c.academicYear), csv(c.teacherName)].join(',')).join('\n');
         const BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
         const blob = new Blob([BOM, header + body], {
             type: 'text/csv;charset=utf-8;'
@@ -239,10 +240,12 @@ function mapClassOption(c) {
     const grade = c.grade || '';
     const room = c.roomNumber || '';
     const year = c.academicYear || '';
+
     let label = name;
     if (grade) label += ` - ${grade}`;
     if (room) label += ` (${room})`;
     if (year) label += ` • ${year}`;
+
     return { value: c.id, label };
 }
 

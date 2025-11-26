@@ -22,37 +22,65 @@ import StudentProfileModal from '@/components/staff/StudentProfileModal.vue';
 
 const router = useRouter();
 
-/* Top filters (FE only, BE hiện chưa dùng các field này) */
+/* ================= TOP FILTERS ================= */
+
 const years = ref([
     { label: '2024 - 2025', value: '2024-2025' },
     { label: '2023 - 2024', value: '2023-2024' }
 ]);
 const selectedYear = ref(years.value[0]);
 
-const grades = ref([
-    { label: 'Chọn khối', value: '' },
-    { label: 'Koala', value: 'koala' },
-    { label: 'Panda', value: 'panda' },
-    { label: 'Polar', value: 'polar' },
-    { label: 'Global', value: 'global' }
+// Khối mầm non: Nhà trẻ, Mầm, Chồi, Lá
+const gradeFilters = ref([
+    { label: 'Tất cả khối', value: '' },
+    { label: 'Nhà trẻ', value: 'Nhà trẻ' },
+    { label: 'Mầm', value: 'Mầm' },
+    { label: 'Chồi', value: 'Chồi' },
+    { label: 'Lá', value: 'Lá' }
 ]);
-const selectedGrade = ref(grades.value[0]);
+const selectedGrade = ref(gradeFilters.value[0]);
 
-const groups = ref([
-    { label: 'Chọn nhóm lớp', value: '' },
-    { label: 'Nhóm 1', value: 'g1' },
-    { label: 'Nhóm 2', value: 'g2' }
-]);
-const selectedGroup = ref(groups.value[0]);
+// Mapping các lớp theo từng khối
+const CLASS_BY_GRADE = {
+    'Nhà trẻ': ['Nhà trẻ 1', 'Nhà trẻ 2'],
+    Mầm: ['Mầm 1', 'Mầm 2', 'Mầm 3'],
+    'Chồi': ['Chồi 1', 'Chồi 2'],
+    'Lá': ['Lá 1', 'Lá 2']
+};
 
-const systems = ref([
-    { label: 'Chọn hệ lớp', value: '' },
-    { label: 'Song ngữ', value: 'bi' },
-    { label: 'Quốc tế', value: 'intl' }
-]);
-const selectedSystem = ref(systems.value[0]);
+// Dropdown Lớp – sẽ build lại dựa theo selectedGrade
+const classFilters = ref([]);
+const selectedClassFilter = ref({ label: 'Tất cả lớp', value: '' });
 
-/* Status tabs */
+// Hàm build lại danh sách lớp theo khối
+function rebuildClassFilters() {
+    const grade = selectedGrade.value?.value;
+    let classNames = [];
+
+    if (!grade) {
+        // Không chọn khối => hiển thị tất cả lớp
+        Object.values(CLASS_BY_GRADE).forEach((arr) => {
+            classNames.push(...arr);
+        });
+    } else {
+        classNames = CLASS_BY_GRADE[grade] || [];
+    }
+
+    const opts = [
+        { label: 'Tất cả lớp', value: '' },
+        ...classNames.map((name) => ({ label: name, value: name }))
+    ];
+
+    // Giữ lại lớp đang chọn nếu vẫn tồn tại, nếu không thì reset về "Tất cả lớp"
+    const currentVal = selectedClassFilter.value?.value;
+    const found = opts.find((o) => o.value === currentVal);
+    selectedClassFilter.value = found || opts[0];
+
+    classFilters.value = opts;
+}
+
+/* ================= STATUS TABS ================= */
+
 const status = ref('studying');
 const statusDefs = [
     { key: 'studying', label: 'Đang đi học', color: 'text-primary', bg: 'tab--blue' },
@@ -63,19 +91,22 @@ const statusDefs = [
     { key: 'deleted', label: 'Đã xóa', color: 'text-rose-600', bg: 'tab--red' }
 ];
 
-/* Table filters */
+/* ================= FILTER TRONG HEADER BẢNG ================= */
+
 const fCode = ref('');
 const fName = ref('');
 const fClass = ref('');
 const fParent = ref('');
 
-/* Paging/sort */
+/* ================= PAGINATION / SORT ================= */
+
 const page = ref(1);
 const size = ref(10);
 const sortField = ref('');
 const sortOrder = ref(0);
 
-/* Data */
+/* ================= DATA ================= */
+
 const loadingInit = ref(false);
 const loadingList = ref(false);
 const rows = ref([]);
@@ -93,7 +124,8 @@ const counts = computed(() => ({
     total: allData.value.length
 }));
 
-/* SweetAlert toasts */
+/* ================= SWEETALERT TOAST ================= */
+
 const swalToast = Swal.mixin({
     toast: true,
     position: 'top-end',
@@ -102,10 +134,10 @@ const swalToast = Swal.mixin({
     timerProgressBar: true
 });
 
-/* disable actions while deleting to avoid duplicate clicks */
 const isDeleting = ref(false);
 
-/* Row menu + chuyển lớp + hồ sơ học sinh */
+/* ================= ROW MENU + MODALS ================= */
+
 const rowMenu = ref();
 const activeRow = ref(null);
 
@@ -139,7 +171,6 @@ async function onProfileUpdated() {
     await load(false);
 }
 
-/* Row menu items */
 const rowMenuItems = ref([
     {
         label: 'Xem hồ sơ',
@@ -187,7 +218,8 @@ const rowMenuItems = ref([
     }
 ]);
 
-/* Helpers */
+/* ================= HELPERS ================= */
+
 function genderIcon(g) {
     return g === 'F' ? 'fa-solid fa-venus text-pink-500' : 'fa-solid fa-mars text-blue-500';
 }
@@ -205,25 +237,28 @@ function formatDob(d) {
     }
 }
 
-/* Load data */
+/* ================= LOAD DATA ================= */
+
 async function load(isInit = false) {
     if (isInit) loadingInit.value = true;
     else loadingList.value = true;
     try {
-        const q = [fCode.value, fName.value, fParent.value].filter(Boolean).join(' ');
+        // lấy tất cả để tính số lượng theo trạng thái
         const all = await fetchStudents({ status: 'all', page: 1, size: 99999 });
         allData.value = all.items;
 
         const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
+
+        // Ưu tiên filter theo dropdown lớp, nếu không chọn thì dùng ô tìm kiếm lớp trong header
+        const classNameFilter = selectedClassFilter.value?.value || fClass.value || undefined;
+
         const { items, total } = await fetchStudents({
             status: status.value,
             year: selectedYear.value?.value,
-            grade: selectedGrade.value?.value,
-            group: selectedGroup.value?.value,
-            system: selectedSystem.value?.value,
+            grade: selectedGrade.value?.value || undefined, // khối: Nhà trẻ / Mầm / Chồi / Lá
+            className: classNameFilter, // tên lớp: Mầm 1, Chồi 2, ...
             code: fCode.value || undefined,
             name: fName.value || undefined,
-            className: fClass.value || undefined,
             parentName: fParent.value || undefined,
             page: page.value,
             size: size.value,
@@ -236,6 +271,8 @@ async function load(isInit = false) {
         else loadingList.value = false;
     }
 }
+
+/* ================= SORT / PAGINATION ================= */
 
 function onStatusChange(k) {
     status.value = k;
@@ -256,10 +293,13 @@ function onChangePage(e) {
     load(false);
 }
 
-/* Bulk actions – hiện chỉ xử lý delete */
+/* ================= BULK ACTIONS ================= */
+
 function onBulk(action) {
     if (action === 'delete') onBulkDelete();
 }
+
+/* ================= EXPORT ================= */
 
 async function onExport() {
     try {
@@ -270,7 +310,8 @@ async function onExport() {
     }
 }
 
-/* Import modal state */
+/* ================= IMPORT MODAL ================= */
+
 const showImport = ref(false);
 function openImport() {
     showImport.value = true;
@@ -279,7 +320,8 @@ async function onImported() {
     await load(false);
 }
 
-/* Create student modal state */
+/* ================= CREATE STUDENT MODAL ================= */
+
 const showCreate = ref(false);
 function openCreate() {
     showCreate.value = true;
@@ -288,7 +330,8 @@ async function onStudentCreated() {
     await load(false);
 }
 
-/* Xóa 1 học sinh */
+/* ================= XOÁ 1 HỌC SINH ================= */
+
 async function onDeleteRow(row) {
     if (isDeleting.value || !row?.id) return;
     const { isConfirmed } = await Swal.fire({
@@ -326,7 +369,8 @@ async function onDeleteRow(row) {
     }
 }
 
-/* Xóa nhiều */
+/* ================= XOÁ NHIỀU HỌC SINH ================= */
+
 async function onBulkDelete() {
     if (isDeleting.value) return;
     const ids = selection.value.map((s) => s.id);
@@ -360,9 +404,7 @@ async function onBulkDelete() {
 
     try {
         const result = await deleteStudents(ids, { timeoutMs: 12000 });
-        const msg = result.fail
-            ? `Xóa xong: ${result.ok}/${ids.length}. Lỗi: ${result.fail}`
-            : `Đã xóa ${result.ok}/${ids.length} học sinh`;
+        const msg = result.fail ? `Xóa xong: ${result.ok}/${ids.length}. Lỗi: ${result.fail}` : `Đã xóa ${result.ok}/${ids.length} học sinh`;
         await swalToast.fire({ icon: result.fail ? 'warning' : 'success', title: msg });
         selection.value = [];
         await load(false);
@@ -376,7 +418,8 @@ async function onBulkDelete() {
     }
 }
 
-/* Debounce filters */
+/* ================= DEBOUNCE FILTER HEADER ================= */
+
 let t;
 function debounce(fn, ms = 250) {
     clearTimeout(t);
@@ -388,13 +431,45 @@ watch([fCode, fName, fClass, fParent], () =>
         load(false);
     }, 300)
 );
-watch([selectedYear, selectedGrade, selectedGroup, selectedSystem], () => {
-    page.value = 1;
-    load(false);
-});
 
-onMounted(() => load(true));
+/* ================= WATCH TOP FILTERS ================= */
+
+// Đổi năm học -> reload
+watch(
+    () => selectedYear.value,
+    () => {
+        page.value = 1;
+        load(false);
+    }
+);
+
+// Đổi khối -> rebuild danh sách lớp + reload
+watch(
+    () => selectedGrade.value,
+    () => {
+        rebuildClassFilters();
+        page.value = 1;
+        load(false);
+    }
+);
+
+// Đổi lớp -> reload
+watch(
+    () => selectedClassFilter.value,
+    () => {
+        page.value = 1;
+        load(false);
+    }
+);
+
+/* ================= LIFECYCLE ================= */
+
+onMounted(() => {
+    rebuildClassFilters(); // build lần đầu
+    load(true);
+});
 </script>
+
 
 <template>
     <div class="px-4 md:px-6 lg:px-8 py-5 space-y-4">
@@ -412,12 +487,11 @@ onMounted(() => load(true));
             </div>
         </div>
 
-        <!-- Top filters -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <!-- Top filters: Năm học / Khối / Lớp -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Dropdown v-model="selectedYear" :options="years" optionLabel="label" class="w-full" placeholder="Năm học" />
-            <Dropdown v-model="selectedGrade" :options="grades" optionLabel="label" class="w-full" />
-            <Dropdown v-model="selectedGroup" :options="groups" optionLabel="label" class="w-full" />
-            <Dropdown v-model="selectedSystem" :options="systems" optionLabel="label" class="w-full" />
+            <Dropdown v-model="selectedGrade" :options="gradeFilters" optionLabel="label" class="w-full" placeholder="Chọn khối" />
+            <Dropdown v-model="selectedClassFilter" :options="classFilters" optionLabel="label" class="w-full" placeholder="Chọn lớp" />
         </div>
 
         <!-- Status tabs -->
@@ -439,9 +513,7 @@ onMounted(() => load(true));
         <!-- Table -->
         <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
             <!-- Loading overlay -->
-            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
-                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu học sinh...
-            </div>
+            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu học sinh...</div>
 
             <DataTable :value="rows" v-model:selection="selection" dataKey="id" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
                 <Column selectionMode="multiple" headerStyle="width: 3rem" />
@@ -557,7 +629,9 @@ onMounted(() => load(true));
                     </span>
                     <div class="flex-1 min-w-0 text-left">
                         <div class="menu-item__label truncate">{{ item.label }}</div>
-                        <div v-if="item.sub" class="menu-item__sub truncate">{{ item.sub }}</div>
+                        <div v-if="item.sub" class="menu-item__sub truncate">
+                            {{ item.sub }}
+                        </div>
                         <span v-if="item.kb" class="menu-item__kbd">{{ item.kb }}</span>
                     </div>
                 </button>
@@ -676,7 +750,7 @@ onMounted(() => load(true));
 }
 .menu-item--danger .menu-item__icon {
     background: #fef2f2;
-    color: #dc2626;
+    color: #dc2626;7
 }
 .menu-item__label {
     font-size: 14px;

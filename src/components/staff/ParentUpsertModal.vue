@@ -142,10 +142,13 @@ async function handleSubmit() {
 
     submitting.value = true;
     try {
-        // username giống import: lấy phần trước @ của email
+        const emailTrimmed = form.email.trim().toLowerCase();
+        const phoneTrimmed = form.phone.trim();
+
+        // username giống import: lấy phần trước @ của email (đã lowercase)
         let username = '';
-        if (form.email) {
-            username = form.email.split('@')[0];
+        if (emailTrimmed) {
+            username = emailTrimmed.split('@')[0];
         }
 
         // Nếu admin không nhập mật khẩu → dùng 123456
@@ -155,8 +158,8 @@ async function handleSubmit() {
             username,
             password: passwordToSend,
             fullName: form.fullName.trim(),
-            email: form.email.trim(),
-            phone: form.phone.trim(),
+            email: emailTrimmed,
+            phone: phoneTrimmed,
             dateOfBirth: form.dateOfBirth ? formatDateToIso(form.dateOfBirth) : null,
             gender: form.gender || null,
             occupation: form.occupation || null,
@@ -182,7 +185,7 @@ async function handleSubmit() {
             `
         });
 
-        emit('saved'); // cho màn list reload
+        emit('saved');
         closeDialog();
     } catch (e) {
         const msg = e?.response?.data?.message || e?.message || 'Không thể tạo phụ huynh, vui lòng thử lại';

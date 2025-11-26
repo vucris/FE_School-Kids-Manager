@@ -29,7 +29,7 @@ const genders = [
     { label: 'Nữ', value: 'FEMALE' }
 ];
 
-/* Form: bổ sung các field BE yêu cầu: username, email, password */
+/* Form: vẫn giữ các field account để gửi cho BE, nhưng ẩn UI */
 const form = reactive({
     fullName: '',
     gender: null,
@@ -47,27 +47,25 @@ const form = reactive({
     password: ''
 });
 
+/* Error: chỉ validate những thứ cần người dùng nhập (học sinh mầm non không đụng tới tài khoản) */
 const errors = reactive({
     fullName: '',
     gender: '',
     dateOfBirth: '',
     studentCode: '',
     classId: '',
-    parentId: '',
-    username: '',
-    password: '',
-    email: ''
+    parentId: ''
 });
 
 const submitting = ref(false);
 const serverError = ref('');
-const showPass = ref(false);
 
 const remoteClassOptions = ref([]);
 const remoteParentOptions = ref([]);
 const refLoading = reactive({ classes: false, parents: false });
 const refError = ref('');
 
+/* Option lớp / phụ huynh */
 const clsOptions = computed(() => (props.classOptions?.length ? props.classOptions : remoteClassOptions.value));
 const prOptions = computed(() => (props.parentOptions?.length ? props.parentOptions : remoteParentOptions.value));
 
@@ -80,7 +78,7 @@ watch(
     }
 );
 
-/* Helpers */
+/* Helpers ngày giờ + gợi ý account ẩn */
 function toYMD(d) {
     if (!(d instanceof Date) || isNaN(d)) return null;
     const yyyy = d.getFullYear();
@@ -181,7 +179,7 @@ function resetForm() {
     submitting.value = false;
 }
 
-/* Auto gợi ý code/username/password/email */
+/* Auto gợi ý code/username/password/email nhưng ẩn khỏi UI */
 watch(
     () => form.fullName,
     () => {
@@ -210,6 +208,7 @@ watch(
     }
 );
 
+/* Validate: chỉ kiểm tra phần thông tin cần nhập cho mầm non */
 function validate() {
     errors.fullName = form.fullName.trim() ? '' : 'Bắt buộc';
     errors.gender = form.gender ? '' : 'Bắt buộc';
@@ -217,26 +216,38 @@ function validate() {
     errors.studentCode = form.studentCode.trim() ? '' : 'Bắt buộc';
     errors.classId = form.classId ? '' : 'Bắt buộc';
     errors.parentId = form.parentId ? '' : 'Bắt buộc';
-    errors.username = form.username.trim() ? '' : 'Bắt buộc';
-    errors.password = form.password.trim() ? '' : 'Bắt buộc';
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-        errors.email = 'Email không hợp lệ';
-    } else {
-        errors.email = '';
-    }
+
     return !Object.values(errors).some(Boolean);
 }
 
 async function onSubmit() {
     serverError.value = '';
+
+    // đảm bảo luôn có mã HS + account ẩn trước khi validate / gửi
+    if (!form.studentCode) {
+        form.studentCode = 'HS' + Date.now().toString().slice(-6);
+    }
+    if (!form.username) {
+        form.username = suggestUsername() || `hs${randomDigits(5)}`;
+    }
+    if (!form.password) {
+        form.password = suggestPassword();
+    }
+    if (!form.email) {
+        form.email = suggestEmail();
+    }
+
     if (!validate()) return;
+
     submitting.value = true;
 
     const payload = {
-        // BẮT BUỘC theo BE
+        // account ẩn – chỉ phục vụ BE, học sinh mầm non không dùng để đăng nhập
         username: form.username.trim(),
         email: form.email?.trim() || null,
         password: form.password.trim(),
+
+        // thông tin học sinh
         fullName: form.fullName.trim(),
         phone: form.phone?.trim() || null,
         gender: form.gender, // 'MALE' | 'FEMALE'
@@ -268,35 +279,40 @@ async function onSubmit() {
             <div class="text-lg font-semibold text-slate-800">Tạo học sinh</div>
         </template>
 
+        <!-- THÔNG TIN HỌC SINH -->
         <div class="section">
             <div class="section__title">Thông tin học sinh</div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                    <label class="label">Họ và tên <span class="req">*</span></label>
+                    <label class="label"> Họ và tên <span class="req">*</span> </label>
                     <InputText v-model="form.fullName" class="w-full" :class="{ 'p-invalid': !!errors.fullName }" />
                     <small v-if="errors.fullName" class="error">{{ errors.fullName }}</small>
                 </div>
+
                 <div>
-                    <label class="label">Giới tính <span class="req">*</span></label>
+                    <label class="label"> Giới tính <span class="req">*</span> </label>
                     <Dropdown v-model="form.gender" :options="genders" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn giới tính" :class="{ 'p-invalid': !!errors.gender }" />
                     <small v-if="errors.gender" class="error">{{ errors.gender }}</small>
                 </div>
 
                 <div>
-                    <label class="label">Ngày sinh <span class="req">*</span></label>
+                    <label class="label"> Ngày sinh <span class="req">*</span> </label>
                     <Calendar v-model="form.dateOfBirth" class="w-full" dateFormat="dd/mm/yy" placeholder="dd/mm/yyyy" :class="{ 'p-invalid': !!errors.dateOfBirth }" />
                     <small v-if="errors.dateOfBirth" class="error">{{ errors.dateOfBirth }}</small>
                 </div>
+
                 <div>
-                    <label class="label">Mã học sinh <span class="req">*</span></label>
+                    <label class="label"> Mã học sinh <span class="req">*</span> </label>
                     <InputText v-model="form.studentCode" class="w-full" :class="{ 'p-invalid': !!errors.studentCode }" placeholder="HS0007" />
                     <small v-if="errors.studentCode" class="error">{{ errors.studentCode }}</small>
+                    <small class="hint">Không nhập cũng được, hệ thống sẽ tự sinh mã.</small>
                 </div>
 
                 <div>
                     <label class="label">Ngày nhập học</label>
                     <Calendar v-model="form.enrollmentDate" class="w-full" showTime hourFormat="24" placeholder="yyyy-MM-dd HH:mm" />
                 </div>
+
                 <div>
                     <label class="label">Số điện thoại</label>
                     <InputText v-model="form.phone" class="w-full" placeholder="0987xxxxxx" />
@@ -306,10 +322,12 @@ async function onSubmit() {
                     <label class="label">Địa chỉ</label>
                     <InputText v-model="form.address" class="w-full" placeholder="Địa chỉ" />
                 </div>
+
                 <div class="md:col-span-2">
                     <label class="label">Ghi chú sức khỏe</label>
                     <Textarea v-model="form.healthNotes" class="w-full" autoResize rows="2" placeholder="Dị ứng, tiền sử bệnh..." />
                 </div>
+
                 <div class="md:col-span-2">
                     <label class="label">Avatar URL</label>
                     <InputText v-model="form.avatarUrl" class="w-full" placeholder="https://example.com/avatar.png" />
@@ -317,54 +335,37 @@ async function onSubmit() {
             </div>
         </div>
 
-        <div class="section">
-            <div class="section__title">Tài khoản (phục vụ BE)</div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                    <label class="label">Username <span class="req">*</span></label>
-                    <InputText v-model="form.username" class="w-full" :class="{ 'p-invalid': !!errors.username }" placeholder="vd: nguyenvana123" />
-                    <small v-if="errors.username" class="error">{{ errors.username }}</small>
-                </div>
-                <div>
-                    <label class="label">Email</label>
-                    <InputText v-model="form.email" class="w-full" :class="{ 'p-invalid': !!errors.email }" placeholder="hs0007@school.local" />
-                    <small v-if="errors.email" class="error">{{ errors.email }}</small>
-                </div>
-                <div class="md:col-span-2">
-                    <label class="label">Mật khẩu <span class="req">*</span></label>
-                    <div class="flex gap-2">
-                        <InputText :type="showPass ? 'text' : 'password'" v-model="form.password" class="w-full" :class="{ 'p-invalid': !!errors.password }" placeholder="Hs@1234" />
-                        <Button type="button" class="!bg-slate-200 !border-0 !text-slate-800" @click="showPass = !showPass" :label="showPass ? 'Ẩn' : 'Hiện'" />
-                        <Button type="button" class="!bg-sky-600 !border-0 !text-white" label="Gợi ý" @click="form.password = suggestPassword()" />
-                    </div>
-                    <small v-if="errors.password" class="error">{{ errors.password }}</small>
-                </div>
-            </div>
-            <small class="hint">Nếu hệ mầm non không dùng tài khoản riêng, vẫn gửi các trường này để BE tạo bản ghi hợp lệ (có thể là username/email ngẫu nhiên).</small>
-        </div>
-
+        <!-- LIÊN KẾT LỚP & PHỤ HUYNH -->
         <div class="section">
             <div class="section__title">Liên kết lớp & phụ huynh</div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                    <label class="label">Lớp <span class="req">*</span></label>
+                    <label class="label"> Lớp <span class="req">*</span> </label>
                     <Dropdown v-model="form.classId" :options="clsOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" :class="{ 'p-invalid': !!errors.classId }" :filter="true" showClear />
                     <small v-if="errors.classId" class="error">{{ errors.classId }}</small>
                     <small v-if="refLoading.classes" class="hint">Đang tải danh sách lớp...</small>
                     <small v-else-if="!refLoading.classes && !clsOptions.length" class="error">Không có dữ liệu lớp</small>
                 </div>
+
                 <div>
-                    <label class="label">Phụ huynh <span class="req">*</span></label>
+                    <label class="label"> Phụ huynh <span class="req">*</span> </label>
                     <Dropdown v-model="form.parentId" :options="prOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn phụ huynh" :class="{ 'p-invalid': !!errors.parentId }" :filter="true" showClear />
                     <small v-if="errors.parentId" class="error">{{ errors.parentId }}</small>
                     <small v-if="refLoading.parents" class="hint">Đang tải danh sách phụ huynh...</small>
                     <small v-else-if="!refLoading.parents && !prOptions.length" class="error">Không có dữ liệu phụ huynh</small>
                 </div>
             </div>
-            <div v-if="refError" class="mt-2 text-sm text-rose-600 font-medium">{{ refError }}</div>
+
+            <div v-if="refError" class="mt-2 text-sm text-rose-600 font-medium">
+                {{ refError }}
+            </div>
+
+            <p class="hint mt-2">Tài khoản đăng nhập sẽ do phụ huynh sử dụng. Tài khoản nội bộ của học sinh được hệ thống tự sinh và <b>không hiển thị</b> ở đây.</p>
         </div>
 
-        <div v-if="serverError" class="mt-2 text-sm text-rose-600 font-medium">{{ serverError }}</div>
+        <div v-if="serverError" class="mt-2 text-sm text-rose-600 font-medium">
+            {{ serverError }}
+        </div>
 
         <template #footer>
             <div class="flex items-center justify-end gap-2 w-full">
