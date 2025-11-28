@@ -12,7 +12,7 @@ import InputText from 'primevue/inputtext';
 import Swal from 'sweetalert2';
 
 import { fetchClassOptions } from '@/service/classService.js';
-import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu, updateWeeklyMenu, fetchMenusByClass, deleteWeeklyMenu } from '@/service/menuService.js';
+import { fetchAllMenuDishes, createMenuDishes, fetchWeeklyMenu, createWeeklyMenu, updateWeeklyMenu, fetchMenusByClass, deleteMenuByDateRange } from '@/service/menuService.js';
 
 /* ===== Tabs (Tạo thực đơn / Chi tiết thực đơn) ===== */
 const activeTab = ref('create'); // 'create' | 'detail'
@@ -55,15 +55,57 @@ function formatDateDisplay(date) {
 /* ===== Lớp (dùng chung) ===== */
 const classOptions = ref([]);
 
+/* Áp dụng thực đơn: theo lớp / theo khối */
+const applyMode = ref('class'); // 'class' | 'grade'
+const selectedGradeForMenu = ref('');
+
+/* Sinh danh sách khối từ tên lớp */
+const gradeOptions = computed(() => {
+    const map = new Map();
+    classOptions.value.forEach((cls) => {
+        const label = cls.label || '';
+        if (!label) return;
+        const parts = label.split(' ');
+        if (!parts.length) return;
+
+        let grade = parts[0];
+        if (parts[0] === 'Nhà' && parts[1] === 'trẻ') grade = 'Nhà trẻ';
+
+        if (!map.has(grade)) {
+            map.set(grade, { label: grade, value: grade });
+        }
+    });
+    return Array.from(map.values());
+});
+
+/* Gom lớp theo khối */
+const classesByGrade = computed(() => {
+    const res = {};
+    classOptions.value.forEach((cls) => {
+        const label = cls.label || '';
+        if (!label) return;
+        const parts = label.split(' ');
+        if (!parts.length) return;
+
+        let grade = parts[0];
+        if (parts[0] === 'Nhà' && parts[1] === 'trẻ') grade = 'Nhà trẻ';
+
+        if (!res[grade]) res[grade] = [];
+        res[grade].push(cls);
+    });
+    return res;
+});
+
 /* ====== PHẦN 1: TẠO / SỬA THỰC ĐƠN TUẦN ====== */
 const selectedClassId = ref(null);
 const startDate = ref(null);
 const endDate = ref(null);
 
+// gợi ý: 6 ngày (T2 -> T7)
 const autoEndDate = computed(() => {
     if (!startDate.value) return null;
     const d = new Date(startDate.value);
-    d.setDate(d.getDate() + 6);
+    d.setDate(d.getDate() + 5);
     return d;
 });
 
@@ -82,6 +124,7 @@ const mealTypes = ['Sáng', 'Trưa', 'Chiều'];
 
 // weeklyMenu: { [day]: { [meal]: { dishIds: number[] } } }
 const weeklyMenu = ref({});
+
 function initEmptyWeeklyMenu() {
     const m = {};
     daysOfWeek.forEach((day) => {
@@ -137,10 +180,11 @@ function removeDish(idx) {
 /* ====== PHẦN 2: CHI TIẾT THỰC ĐƠN (LIST + DETAIL) ====== */
 const classFilterText = ref(''); // lọc theo tên khối/lớp
 
-// [{ id, classId, className, startDate, endDate, createdBy, raw }]
+// mỗi row là 1 "thực đơn của khối trong 1 tuần"
+// { id, classId, classIds, classNames, className (khối), startDate, endDate, createdBy, raw }
 const menuList = ref([]);
 const selectedMenu = ref(null);
-const detailMenu = ref(null); // MenuResponse của menu đang xem
+const detailMenu = ref(null); // MenuResponse đại diện
 const detailLoading = ref(false);
 
 const detailDaysOfWeek = daysOfWeek;
@@ -165,9 +209,9 @@ function onSelectMenu(row) {
     detailMenu.value = row.raw || null;
 }
 
-/* Xóa thực đơn đang chọn */
+/* Xóa thực đơn đang chọn cho TOÀN BỘ LỚP trong khối */
 async function onDeleteSelectedMenu() {
-    if (!detailMenu.value || !detailMenu.value.id) {
+    if (!selectedMenu.value) {
         Swal.fire({
             icon: 'warning',
             title: 'Chưa chọn thực đơn',
@@ -176,10 +220,15 @@ async function onDeleteSelectedMenu() {
         return;
     }
 
+    const row = selectedMenu.value;
+    const classIds = row.classIds && row.classIds.length ? row.classIds : [row.classId];
+    const startStr = formatDate_ddMMyyyy(row.startDate);
+    const endStr = formatDate_ddMMyyyy(row.endDate);
+
     const { isConfirmed } = await Swal.fire({
         icon: 'warning',
         title: 'Xóa thực đơn?',
-        text: 'Thực đơn tuần này sẽ bị xóa khỏi hệ thống.',
+        text: `Thực đơn tuần này sẽ bị xóa cho toàn bộ lớp trong khối "${row.className}".`,
         showCancelButton: true,
         confirmButtonText: 'Xóa',
         cancelButtonText: 'Hủy',
@@ -190,24 +239,19 @@ async function onDeleteSelectedMenu() {
     if (!isConfirmed) return;
 
     try {
-        await deleteWeeklyMenu(detailMenu.value.id);
+        await Promise.all(
+            classIds.map((cid) =>
+                deleteMenuByDateRange(cid, startStr, endStr).catch((e) => {
+                    console.error('Lỗi xóa menu cho lớp', cid, e);
+                })
+            )
+        );
 
-        const idx = menuList.value.findIndex((m) => m.id === detailMenu.value.id);
-        if (idx !== -1) {
-            menuList.value.splice(idx, 1);
-        }
-
-        if (menuList.value.length > 0) {
-            selectedMenu.value = menuList.value[0];
-            detailMenu.value = menuList.value[0].raw;
-        } else {
-            selectedMenu.value = null;
-            detailMenu.value = null;
-        }
+        await initAllMenus();
 
         swalToast.fire({
             icon: 'success',
-            title: 'Đã xóa thực đơn tuần'
+            title: `Đã xóa thực đơn tuần của khối ${row.className}`
         });
     } catch (e) {
         Swal.fire({
@@ -222,29 +266,63 @@ async function onDeleteSelectedMenu() {
 async function initAllMenus() {
     detailLoading.value = true;
     try {
-        const all = [];
+        const grouped = new Map();
 
         for (const cls of classOptions.value) {
             const menus = await fetchMenusByClass(cls.value);
             (menus || []).forEach((m) => {
-                all.push({
-                    id: m.id,
-                    classId: cls.value,
-                    className: m.className || cls.label,
-                    startDate: new Date(m.startDate),
-                    endDate: new Date(m.endDate),
-                    createdBy: m.createdBy,
-                    raw: m
-                });
+                const fullName = m.className || cls.label || '';
+                const parts = fullName.split(' ');
+                let grade = parts[0] || '';
+                if (parts[0] === 'Nhà' && parts[1] === 'trẻ') grade = 'Nhà trẻ';
+
+                const startD = new Date(m.startDate);
+                const endD = new Date(m.endDate);
+                const startKey = startD.toISOString().substring(0, 10);
+                const endKey = endD.toISOString().substring(0, 10);
+
+                const key = `${grade}|${startKey}|${endKey}`;
+
+                if (!grouped.has(key)) {
+                    grouped.set(key, {
+                        id: m.id,
+                        gradeName: grade,
+                        classIds: [cls.value],
+                        classNames: [fullName],
+                        startDate: startD,
+                        endDate: endD,
+                        createdBy: m.createdBy,
+                        raw: m
+                    });
+                } else {
+                    const g = grouped.get(key);
+                    g.classIds.push(cls.value);
+                    g.classNames.push(fullName);
+                }
             });
         }
 
-        all.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+        const all = Array.from(grouped.values()).map((g) => ({
+            id: g.id,
+            classId: g.classIds[0], // đại diện
+            classIds: g.classIds,
+            classNames: g.classNames,
+            className: g.gradeName, // HIỂN THỊ THEO KHỐI
+            startDate: g.startDate,
+            endDate: g.endDate,
+            createdBy: g.createdBy,
+            raw: g.raw // MenuResponse đại diện
+        }));
+
+        all.sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
         menuList.value = all;
 
         if (menuList.value.length > 0) {
             selectedMenu.value = menuList.value[0];
             detailMenu.value = menuList.value[0].raw;
+        } else {
+            selectedMenu.value = null;
+            detailMenu.value = null;
         }
     } catch (e) {
         console.warn('[MenuPage] initAllMenus error:', e);
@@ -277,12 +355,32 @@ async function init() {
     }
 }
 
-/* Load 1 thực đơn tuần vào tab Tạo/Sửa */
+/* Load 1 thực đơn tuần vào tab Tạo/Sửa (theo lớp hoặc theo khối) */
 async function onLoadWeeklyMenu() {
-    if (!selectedClassId.value) {
-        Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
-        return;
+    let targetClassId = null;
+
+    if (applyMode.value === 'class') {
+        if (!selectedClassId.value) {
+            Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
+            return;
+        }
+        targetClassId = selectedClassId.value;
+    } else {
+        if (!selectedGradeForMenu.value) {
+            Swal.fire({ icon: 'warning', title: 'Vui lòng chọn khối' });
+            return;
+        }
+        const list = classesByGrade.value[selectedGradeForMenu.value] || [];
+        if (!list.length) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Khối này chưa có lớp nào'
+            });
+            return;
+        }
+        targetClassId = list[0].value; // lấy 1 lớp đại diện
     }
+
     if (!startDate.value) {
         Swal.fire({ icon: 'warning', title: 'Vui lòng chọn ngày bắt đầu tuần' });
         return;
@@ -294,7 +392,7 @@ async function onLoadWeeklyMenu() {
     loadingWeekly.value = true;
     try {
         const menu = await fetchWeeklyMenu({
-            classId: selectedClassId.value,
+            classId: targetClassId,
             startDate: startParam,
             endDate: endParam
         });
@@ -308,7 +406,7 @@ async function onLoadWeeklyMenu() {
             });
             return;
         }
-        currentMenuId.value = menu.id;
+        currentMenuId.value = menu.id || null;
         applyMenuFromBackend(menu);
         swalToast.fire({ icon: 'success', title: 'Đã tải thực đơn tuần' });
     } catch (e) {
@@ -322,22 +420,36 @@ async function onLoadWeeklyMenu() {
     }
 }
 
-/* Lưu thực đơn tuần (tạo mới hoặc cập nhật) */
+/* Lưu thực đơn tuần (tạo mới hoặc cập nhật, theo lớp hoặc theo khối) */
 async function onSaveWeeklyMenu() {
-    if (!selectedClassId.value) {
-        Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
-        return;
-    }
     if (!startDate.value) {
         Swal.fire({ icon: 'warning', title: 'Vui lòng chọn ngày bắt đầu tuần' });
         return;
     }
 
+    if (applyMode.value === 'class' && !selectedClassId.value) {
+        Swal.fire({ icon: 'warning', title: 'Vui lòng chọn lớp' });
+        return;
+    }
+    if (applyMode.value === 'grade') {
+        if (!selectedGradeForMenu.value) {
+            Swal.fire({ icon: 'warning', title: 'Vui lòng chọn khối' });
+            return;
+        }
+        const listCheck = classesByGrade.value[selectedGradeForMenu.value] || [];
+        if (!listCheck.length) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Khối này chưa có lớp nào để áp dụng thực đơn'
+            });
+            return;
+        }
+    }
+
     const start = startDate.value;
     const end = endDate.value || autoEndDate.value || start;
 
-    const payload = {
-        classId: selectedClassId.value,
+    const basePayload = {
         startDate: formatDate_ddMMyyyy(start),
         endDate: formatDate_ddMMyyyy(end),
         createdBy: 'admin',
@@ -349,7 +461,7 @@ async function onSaveWeeklyMenu() {
             const cell = weeklyMenu.value[day] && weeklyMenu.value[day][meal];
             const ids = (cell && cell.dishIds) || [];
             if (ids.length) {
-                payload.items.push({
+                basePayload.items.push({
                     dayOfWeek: day,
                     mealType: meal,
                     dishIds: ids
@@ -358,7 +470,7 @@ async function onSaveWeeklyMenu() {
         });
     });
 
-    if (!payload.items.length) {
+    if (!basePayload.items.length) {
         Swal.fire({
             icon: 'warning',
             title: 'Thực đơn trống',
@@ -369,20 +481,65 @@ async function onSaveWeeklyMenu() {
 
     savingMenu.value = true;
     try {
-        if (currentMenuId.value) {
-            await updateWeeklyMenu(currentMenuId.value, payload);
-            swalToast.fire({
-                icon: 'success',
-                title: 'Cập nhật thực đơn tuần thành công'
-            });
+        if (applyMode.value === 'class') {
+            const payload = {
+                ...basePayload,
+                classId: selectedClassId.value
+            };
+
+            if (currentMenuId.value) {
+                await updateWeeklyMenu(currentMenuId.value, payload);
+                swalToast.fire({
+                    icon: 'success',
+                    title: 'Cập nhật thực đơn tuần thành công'
+                });
+            } else {
+                const created = await createWeeklyMenu(payload);
+                currentMenuId.value = created && created.id ? created.id : null;
+                swalToast.fire({
+                    icon: 'success',
+                    title: 'Tạo thực đơn tuần thành công'
+                });
+            }
         } else {
-            const created = await createWeeklyMenu(payload);
-            currentMenuId.value = created && created.id ? created.id : null;
+            const list = classesByGrade.value[selectedGradeForMenu.value] || [];
+            const startIso = formatDate_yyyyMMdd(start);
+            const endIso = formatDate_yyyyMMdd(end);
+
+            let ok = 0;
+            let fail = 0;
+
+            for (const cls of list) {
+                try {
+                    const existing = await fetchWeeklyMenu({
+                        classId: cls.value,
+                        startDate: startIso,
+                        endDate: endIso
+                    });
+
+                    const payloadForClass = {
+                        ...basePayload,
+                        classId: cls.value
+                    };
+
+                    if (existing && existing.id) {
+                        await updateWeeklyMenu(existing.id, payloadForClass);
+                    } else {
+                        await createWeeklyMenu(payloadForClass);
+                    }
+                    ok++;
+                } catch (err) {
+                    console.error('Lỗi lưu thực đơn cho lớp', cls, err);
+                    fail++;
+                }
+            }
+
             swalToast.fire({
-                icon: 'success',
-                title: 'Tạo thực đơn tuần thành công'
+                icon: fail ? 'warning' : 'success',
+                title: fail ? `Đã áp dụng thực đơn cho ${ok}/${list.length} lớp trong khối` : `Đã áp dụng thực đơn cho ${ok} lớp trong khối`
             });
         }
+
         await initAllMenus();
     } catch (e) {
         Swal.fire({
@@ -447,26 +604,48 @@ onMounted(init);
 
             <h1 class="text-xl font-semibold text-slate-800">Thực đơn tuần</h1>
 
-            <!-- Bộ lọc lớp + tuần -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Lớp</label>
-                    <Dropdown v-model="selectedClassId" :options="classOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" />
+            <!-- Bộ lọc lớp / khối + tuần -->
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                <!-- Chọn chế độ áp dụng -->
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-slate-700 mb-1"> Áp dụng thực đơn cho </label>
+                    <div class="flex gap-4 mt-1 text-sm text-slate-700">
+                        <label class="inline-flex items-center gap-2 cursor-pointer">
+                            <input type="radio" value="class" v-model="applyMode" class="h-4 w-4 text-primary border-slate-300" />
+                            <span>1 lớp</span>
+                        </label>
+                        <label class="inline-flex items-center gap-2 cursor-pointer">
+                            <input type="radio" value="grade" v-model="applyMode" class="h-4 w-4 text-primary border-slate-300" />
+                            <span>Cả khối (Nhà trẻ / Mầm / Chồi / Lá)</span>
+                        </label>
+                    </div>
                 </div>
+
+                <!-- Chọn lớp hoặc khối -->
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Ngày bắt đầu tuần</label>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">
+                        {{ applyMode === 'class' ? 'Lớp' : 'Khối' }}
+                    </label>
+                    <Dropdown v-if="applyMode === 'class'" v-model="selectedClassId" :options="classOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" />
+                    <Dropdown v-else v-model="selectedGradeForMenu" :options="gradeOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn khối" />
+                </div>
+
+                <!-- Ngày bắt đầu -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1"> Ngày bắt đầu tuần </label>
                     <Calendar v-model="startDate" dateFormat="dd/mm/yy" class="w-full" showIcon />
                 </div>
+
+                <!-- Ngày kết thúc -->
                 <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">
                         Ngày kết thúc tuần
-                        <span v-if="autoEndDate" class="text-xs text-slate-500">
-                            (gợi ý:
-                            {{ autoEndDate && autoEndDate.toLocaleDateString('vi-VN') }})
-                        </span>
+                        <span v-if="autoEndDate" class="text-xs text-slate-500"> (gợi ý: {{ autoEndDate && autoEndDate.toLocaleDateString('vi-VN') }}) </span>
                     </label>
                     <Calendar v-model="endDate" dateFormat="dd/mm/yy" class="w-full" showIcon />
                 </div>
+
+                <!-- Nút -->
                 <div class="flex gap-2 justify-end">
                     <Button class="!bg-slate-200 !border-0 !text-slate-800" :label="loadingWeekly ? 'Đang tải...' : 'Tải thực đơn'" :disabled="loadingWeekly || loadingInit" @click="onLoadWeeklyMenu" />
                     <Button class="!bg-primary !border-0 !text-white" :label="savingMenu ? 'Đang lưu...' : 'Lưu thực đơn tuần'" :disabled="savingMenu || loadingInit" @click="onSaveWeeklyMenu" />
@@ -557,9 +736,9 @@ onMounted(init);
                             placeholder="Nhập tên món ăn, mỗi dòng một món"
                         ></textarea>
                         <div class="flex justify-between items-center text-xs text-slate-500">
-                            <span
-                                >Đã nhập: <b>{{ parsedDishes.length }}</b> món</span
-                            >
+                            <span>
+                                Đã nhập: <b>{{ parsedDishes.length }}</b> món
+                            </span>
                             <span v-if="parsedDishes.length" class="italic"> Chuyển sang tab <b>Danh sách món</b> để xem và xóa từng món. </span>
                         </div>
                     </div>
@@ -610,12 +789,12 @@ onMounted(init);
             <div class="menu-layout">
                 <!-- Left -->
                 <div class="menu-left">
-                    <h2 class="section-title">Danh sách thực đơn</h2>
+                    <h2 class="section-title">Danh sách thực đơn (theo khối)</h2>
 
-                    <!-- Lọc theo tên khối/lớp -->
+                    <!-- Lọc theo tên khối -->
                     <div class="class-filter">
-                        <label class="filter-label">Khối / Lớp</label>
-                        <InputText v-model="classFilterText" placeholder="Lọc theo tên khối / lớp" class="w-full" />
+                        <label class="filter-label">Khối</label>
+                        <InputText v-model="classFilterText" placeholder="Lọc theo tên khối" class="w-full" />
                     </div>
 
                     <div class="menu-table-wrapper">
@@ -623,7 +802,7 @@ onMounted(init);
                             <thead>
                                 <tr>
                                     <th style="width: 40px">STT</th>
-                                    <th>Khối/Lớp</th>
+                                    <th>Khối</th>
                                     <th>Từ ngày</th>
                                     <th>Đến ngày</th>
                                 </tr>
@@ -659,29 +838,33 @@ onMounted(init);
                     <div class="detail-header-row">
                         <h2 class="section-title">Thông tin chi tiết của thực đơn</h2>
                         <div class="flex gap-2">
-                            <Button class="!bg-rose-500 !border-0 !text-white" icon="fa-solid fa-trash-can mr-2" label="Xóa thực đơn" :disabled="!detailMenu" @click="onDeleteSelectedMenu" />
+                            <Button class="!bg-rose-500 !border-0 !text-white" icon="fa-solid fa-trash-can mr-2" label="Xóa thực đơn" :disabled="!detailMenu || !selectedMenu" @click="onDeleteSelectedMenu" />
                             <Button class="btn-download" icon="fa-solid fa-download mr-2" label="Tải về" :disabled="!detailMenu" />
                         </div>
                     </div>
 
                     <div v-if="detailLoading" class="detail-loading">Đang tải chi tiết thực đơn...</div>
 
-                    <div v-else-if="detailMenu" class="detail-container">
+                    <div v-else-if="detailMenu && selectedMenu" class="detail-container">
                         <div class="detail-meta">
                             <div>
-                                <span class="meta-label">Khối/Lớp:</span>
-                                <b>{{ detailMenu.className }}</b>
+                                <span class="meta-label">Khối:</span>
+                                <b>{{ selectedMenu.className }}</b>
+                            </div>
+                            <div v-if="selectedMenu.classNames && selectedMenu.classNames.length">
+                                <span class="meta-label">Các lớp áp dụng:</span>
+                                <b>{{ selectedMenu.classNames.join(', ') }}</b>
                             </div>
                             <div>
                                 <span class="meta-label">Thời gian:</span>
                                 <b>
-                                    {{ formatDateDisplay(detailMenu.startDate) }} -
-                                    {{ formatDateDisplay(detailMenu.endDate) }}
+                                    {{ formatDateDisplay(selectedMenu.startDate) }} -
+                                    {{ formatDateDisplay(selectedMenu.endDate) }}
                                 </b>
                             </div>
                             <div>
                                 <span class="meta-label">Người tạo:</span>
-                                <b>{{ detailMenu.createdBy || '-' }}</b>
+                                <b>{{ selectedMenu.createdBy || '-' }}</b>
                             </div>
                         </div>
 

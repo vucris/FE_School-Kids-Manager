@@ -13,15 +13,7 @@ import Swal from 'sweetalert2';
 
 import { fetchClassesLite } from '@/service/classService.js';
 import { fetchStudentsByClass } from '@/service/studentService.js';
-import {
-    downloadHealthRecordTemplate,
-    importHealthRecordsFromExcel,
-    exportHealthRecordsToExcel,
-    fetchHealthRecordsByClassAndPeriodFE,
-    deleteHealthRecord,
-    updateHealthRecord,
-    fetchHealthRecordById
-} from '@/service/healthRecordService.js';
+import { downloadHealthRecordTemplate, importHealthRecordsFromExcel, exportHealthRecordsToExcel, fetchHealthRecordsByClassAndPeriodFE, deleteHealthRecord, updateHealthRecord, fetchHealthRecordById } from '@/service/healthRecordService.js';
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser } from '@/service/authService.js';
 
@@ -33,9 +25,8 @@ const currentUser = computed(() => getUsernameFromUser(auth?.user) || 'system');
 const classes = ref([]); // [{ id, name }]
 const selectedClassId = ref(null);
 
-/* Tháng / năm */
+/* Năm */
 const today = new Date();
-const month = ref(today.getMonth() + 1);
 const year = ref(today.getFullYear());
 
 /* Lọc theo tên HS */
@@ -44,7 +35,7 @@ const keyword = ref('');
 /* Data */
 const loading = ref(false);
 const students = ref([]); // toàn bộ học sinh trong lớp
-const healthRecords = ref([]); // hồ sơ sức khỏe theo năm/tháng
+const healthRecords = ref([]); // hồ sơ sức khỏe theo NĂM
 
 /* Import / Export */
 const showImportModal = ref(false);
@@ -116,7 +107,7 @@ function calcAgeInMonthsFromDob(dob, recordYear, recordMonth) {
     return diff >= 0 ? diff : null;
 }
 
-/* Tải dữ liệu: học sinh + health records */
+/* Tải dữ liệu: học sinh + health records của CẢ NĂM */
 async function loadData() {
     if (!selectedClassId.value) return;
 
@@ -124,7 +115,8 @@ async function loadData() {
     try {
         const [stu, records] = await Promise.all([
             fetchStudentsByClass(selectedClassId.value),
-            fetchHealthRecordsByClassAndPeriodFE(selectedClassId.value, year.value, month.value)
+            // chỉ lọc theo NĂM, không theo tháng
+            fetchHealthRecordsByClassAndPeriodFE(selectedClassId.value, year.value, null)
         ]);
 
         students.value = stu || [];
@@ -165,7 +157,8 @@ const rows = computed(() => {
             calcAgeInMonthsFromDob(
                 s.dob || s.dateOfBirth || s.date_of_birth,
                 r.recordYear || year.value,
-                r.recordMonth || month.value
+                // fallback nếu recordMonth không có thì lấy tháng 6 cho giữa năm
+                r.recordMonth || 6
             );
 
         result.push({
@@ -202,7 +195,7 @@ async function onEdit(row) {
     if (!row.healthRecordId) {
         swalToast.fire({
             icon: 'info',
-            title: 'Học sinh này chưa có hồ sơ tháng này'
+            title: 'Học sinh này chưa có hồ sơ năm này'
         });
         return;
     }
@@ -217,7 +210,7 @@ async function onEdit(row) {
             studentName: base.studentName || row.studentName,
             className: base.className || row.className,
             recordYear: base.recordYear || year.value,
-            recordMonth: base.recordMonth || month.value,
+            recordMonth: base.recordMonth || row.recordMonth || 6, // vẫn cho phép chỉnh tháng trong hồ sơ
             ageInMonths: base.ageInMonths ?? row.ageInMonths ?? null,
             weightKg: base.weightKg ?? row.weightKg ?? null,
             heightCm: base.heightCm ?? row.heightCm ?? null,
@@ -255,7 +248,7 @@ async function saveEdit() {
     try {
         const payload = {
             recordYear: f.recordYear,
-            recordMonth: f.recordMonth,
+            recordMonth: f.recordMonth, // vẫn gửi tháng cho BE nếu có
             ageInMonths: f.ageInMonths,
             weightKg: f.weightKg,
             heightCm: f.heightCm,
@@ -387,8 +380,7 @@ async function onImport() {
         const res = await importHealthRecordsFromExcel({
             file: selectedFile.value,
             classId: selectedClassId.value,
-            recordYear: year.value,
-            recordMonth: month.value
+            recordYear: year.value // 🎯 chỉ đo theo NĂM
         });
 
         lastImportResult.value = res || null;
@@ -419,13 +411,12 @@ async function onExport() {
     try {
         const blob = await exportHealthRecordsToExcel({
             classId: selectedClassId.value,
-            year: year.value,
-            month: month.value
+            year: year.value // 🎯 export theo NĂM
         });
         const url = window.URL.createObjectURL(new Blob([blob]));
         const a = document.createElement('a');
         a.href = url;
-        a.download = `ho_so_suc_khoe_lop_${selectedClassId.value}_${month.value}_${year.value}.xlsx`;
+        a.download = `ho_so_suc_khoe_lop_${selectedClassId.value}_nam_${year.value}.xlsx`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -440,8 +431,8 @@ async function onExport() {
     }
 }
 
-/* Auto reload khi đổi lớp / tháng / năm */
-watch([selectedClassId, month, year], () => {
+/* Auto reload khi đổi lớp / năm */
+watch([selectedClassId, year], () => {
     loadData();
 });
 
@@ -468,7 +459,7 @@ onMounted(async () => {
                 <div>
                     <div class="text-2xl font-extrabold tracking-tight text-slate-800">Hồ sơ sức khỏe</div>
                     <div class="text-slate-500 text-sm">
-                        Tháng {{ month }} / {{ year }} • Người thao tác:
+                        Năm {{ year }} • Người thao tác:
                         <span class="font-semibold text-slate-700">{{ currentUser }}</span>
                     </div>
                 </div>
@@ -484,30 +475,14 @@ onMounted(async () => {
         <!-- Bộ lọc -->
         <Card class="card-soft ring-1 ring-slate-100">
             <template #content>
-                <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                     <div class="md:col-span-2">
                         <label class="label">Chọn lớp</label>
                         <Dropdown v-model="selectedClassId" :options="classes" optionLabel="name" optionValue="id" class="w-full" placeholder="Chọn lớp" />
                     </div>
                     <div>
-                        <label class="label">Tháng</label>
-                        <Dropdown
-                            v-model="month"
-                            class="w-full"
-                            :options="Array.from({ length: 12 }, (_, i) => ({ label: String(i + 1), value: i + 1 }))"
-                            optionLabel="label"
-                            optionValue="value"
-                        />
-                    </div>
-                    <div>
                         <label class="label">Năm</label>
-                        <Dropdown
-                            v-model="year"
-                            class="w-full"
-                            :options="[year - 1, year, year + 1].map((y) => ({ label: String(y), value: y }))"
-                            optionLabel="label"
-                            optionValue="value"
-                        />
+                        <Dropdown v-model="year" class="w-full" :options="[year - 1, year, year + 1].map((y) => ({ label: String(y), value: y }))" optionLabel="label" optionValue="value" />
                     </div>
                     <div>
                         <label class="label">Tìm học sinh</label>
@@ -541,11 +516,7 @@ onMounted(async () => {
                     </tr>
                 </thead>
                 <tbody>
-                    <tr
-                        v-for="r in rows"
-                        :key="r.studentId"
-                        class="group transition-all duration-150 hover:bg-sky-50/60 hover:-translate-y-[1px]"
-                    >
+                    <tr v-for="r in rows" :key="r.studentId" class="group transition-all duration-150 hover:bg-sky-50/60 hover:-translate-y-[1px]">
                         <td class="td-first text-slate-400 group-hover:text-slate-500">
                             {{ r.index }}
                         </td>
@@ -581,29 +552,19 @@ onMounted(async () => {
                             </span>
                         </td>
                         <td class="td text-center text-[14px]">
-                            <span
-                                class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100"
-                            >
+                            <span class="inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">
                                 {{ r.bmi ?? 'Không' }}
                             </span>
                         </td>
                         <td class="td">
-                            <span
-                                v-if="r.nutritionStatus"
-                                class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100"
-                            >
+                            <span v-if="r.nutritionStatus" class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
                                 <i class="fa-solid fa-utensils mr-1 text-[10px]"></i>
                                 {{ r.nutritionStatus }}
                             </span>
-                            <span v-else class="inline-flex items-center text-xs text-slate-400 italic">
-                                Không
-                            </span>
+                            <span v-else class="inline-flex items-center text-xs text-slate-400 italic"> Không </span>
                         </td>
                         <td class="td text-center text-[14px]">
-                            <span
-                                v-if="r.bloodType"
-                                class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-100"
-                            >
+                            <span v-if="r.bloodType" class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-100">
                                 {{ r.bloodType }}
                             </span>
                             <span v-else class="text-slate-400 text-xs">Không</span>
@@ -626,12 +587,7 @@ onMounted(async () => {
                         <!-- Hành động -->
                         <td class="td text-center">
                             <div class="flex items-center justify-center gap-2">
-                                <Button
-                                    icon="fa-regular fa-pen-to-square"
-                                    class="btn-ghost !px-2 !py-1"
-                                    v-tooltip.top="'Sửa hồ sơ'"
-                                    @click="onEdit(r)"
-                                />
+                                <Button icon="fa-regular fa-pen-to-square" class="btn-ghost !px-2 !py-1" v-tooltip.top="'Sửa hồ sơ'" @click="onEdit(r)" />
                                 <Button
                                     icon="fa-regular fa-trash-can"
                                     class="!bg-rose-500 !border-0 !text-white !px-2 !py-1"
@@ -650,9 +606,7 @@ onMounted(async () => {
                     </tr>
 
                     <tr v-if="!loading && !rows.length">
-                        <td colspan="16" class="px-3 py-4 text-center text-slate-500">
-                            Không có hồ sơ sức khỏe phù hợp với bộ lọc hiện tại.
-                        </td>
+                        <td colspan="16" class="px-3 py-4 text-center text-slate-500">Không có hồ sơ sức khỏe phù hợp với bộ lọc hiện tại.</td>
                     </tr>
                 </tbody>
             </table>
@@ -675,11 +629,9 @@ onMounted(async () => {
                     </div>
                     <div>
                         Kỳ:
-                        <span class="font-semibold">Tháng {{ month }}/{{ year }}</span>
+                        <span class="font-semibold">Năm {{ year }}</span>
                     </div>
-                    <div class="mt-1 text-xs text-slate-500">
-                        Hệ thống sẽ tự tính <b>Tháng tuổi</b> và <b>BMI</b> từ cân nặng / chiều cao, không cần nhập tay.
-                    </div>
+                    <div class="mt-1 text-xs text-slate-500">Hệ thống sẽ tự tính <b>Tháng tuổi</b> và <b>BMI</b> từ cân nặng / chiều cao, không cần nhập tay.</div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
@@ -701,13 +653,7 @@ onMounted(async () => {
         </Dialog>
 
         <!-- Dialog sửa hồ sơ -->
-        <Dialog
-            v-model:visible="editVisible"
-            modal
-            :style="{ width: '640px', maxWidth: '95vw' }"
-            :draggable="false"
-            :header="editForm.id ? `Cập nhật hồ sơ #${editForm.id}` : 'Cập nhật hồ sơ'"
-        >
+        <Dialog v-model:visible="editVisible" modal :style="{ width: '640px', maxWidth: '95vw' }" :draggable="false" :header="editForm.id ? `Cập nhật hồ sơ #${editForm.id}` : 'Cập nhật hồ sơ'">
             <div class="space-y-4 text-sm text-slate-700">
                 <div class="border-b pb-3">
                     <div class="font-semibold text-slate-800 text-base">

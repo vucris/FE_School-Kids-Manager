@@ -13,14 +13,7 @@ import Dialog from 'primevue/dialog';
 import { useToast } from 'primevue/usetoast';
 import Swal from 'sweetalert2';
 
-import {
-    fetchTeachers,
-    exportTeachersExcel,
-    importTeachersExcel,
-    fetchTeacherById,
-    updateTeacher,
-    toggleTeacherStatus
-} from '@/service/teacherService.js';
+import { fetchTeachers, exportTeachersExcel, importTeachersExcel, fetchTeacherById, updateTeacher, toggleTeacherStatus, downloadTeachersImportTemplate } from '@/service/teacherService.js';
 import CreateStaffModal from '@/components/staff/CreateStaffModal.vue';
 
 const toast = useToast();
@@ -35,16 +28,21 @@ const swalToast = Swal.mixin({
 });
 
 function showSuccess(message) {
-    toast.add({ severity: 'success', summary: 'Thành công', detail: message, life: 2500 });
+    toast.add({
+        severity: 'success',
+        summary: 'Thành công',
+        detail: message,
+        life: 2500
+    });
 }
 function showError(err, fallback) {
-    const msg =
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        err?.message ||
-        fallback ||
-        'Có lỗi xảy ra';
-    toast.add({ severity: 'error', summary: 'Lỗi', detail: msg, life: 3000 });
+    const msg = err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback || 'Có lỗi xảy ra';
+    toast.add({
+        severity: 'error',
+        summary: 'Lỗi',
+        detail: msg,
+        life: 3000
+    });
 }
 
 const showCreate = ref(false);
@@ -235,30 +233,101 @@ function formatDate(d) {
     return `${dd}/${mm}/${yyyy}`;
 }
 
-/* excel import/export */
-const fileInput = ref(null);
-function triggerImport() {
-    fileInput.value?.click();
+/* ==== IMPORT EXCEL DIALOG (giống học sinh) ==== */
+const showImportDialog = ref(false);
+const uploadFileInput = ref(null);
+const selectedImportFile = ref(null);
+const importing = ref(false);
+const importSummary = ref(null);
+const isDragOver = ref(false);
+
+function openImportDialog() {
+    showImportDialog.value = true;
+    selectedImportFile.value = null;
+    importSummary.value = null;
 }
-async function onImportChange(e) {
+
+function onClickChooseFile() {
+    uploadFileInput.value?.click();
+}
+
+function onImportFileChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    selectedImportFile.value = file;
+}
+
+function onDragOver(e) {
+    e.preventDefault();
+    isDragOver.value = true;
+}
+function onDragLeave(e) {
+    e.preventDefault();
+    isDragOver.value = false;
+}
+function onDrop(e) {
+    e.preventDefault();
+    isDragOver.value = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
+        swalToast.fire({
+            icon: 'info',
+            title: 'Vui lòng chọn file Excel (.xlsx hoặc .xls)'
+        });
+        return;
+    }
+    selectedImportFile.value = file;
+}
+
+async function onClickDownloadTemplate() {
     try {
-        await importTeachersExcel(file);
-        swalToast.fire({ icon: 'success', title: 'Đã nhập danh sách giáo viên' });
-        await load(false);
-    } catch (e2) {
-        swalToast.fire({ icon: 'error', title: e2?.response?.data?.message || e2?.message || 'Nhập excel thất bại' });
-    } finally {
-        if (fileInput.value) fileInput.value.value = '';
+        await downloadTeachersImportTemplate();
+        swalToast.fire({
+            icon: 'success',
+            title: 'Đã tải file Excel mẫu'
+        });
+    } catch (e) {
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Tải file mẫu thất bại'
+        });
     }
 }
+
+async function onConfirmImport() {
+    if (!selectedImportFile.value) {
+        swalToast.fire({ icon: 'info', title: 'Vui lòng chọn file Excel' });
+        return;
+    }
+    importing.value = true;
+    try {
+        const result = await importTeachersExcel(selectedImportFile.value);
+        importSummary.value = result || null;
+        swalToast.fire({ icon: 'success', title: 'Nhập Excel thành công' });
+        await load(false);
+    } catch (e) {
+        importSummary.value = null;
+        swalToast.fire({
+            icon: 'error',
+            title: e?.message || 'Nhập Excel thất bại'
+        });
+    } finally {
+        importing.value = false;
+    }
+}
+
+/* excel export */
 async function onExport() {
     try {
         await exportTeachersExcel();
         swalToast.fire({ icon: 'success', title: 'Đang tải file Excel' });
     } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.response?.data?.message || e?.message || 'Xuất Excel thất bại' });
+        swalToast.fire({
+            icon: 'error',
+            title: e?.response?.data?.message || e?.message || 'Xuất Excel thất bại'
+        });
     }
 }
 
@@ -335,8 +404,7 @@ onMounted(() => load(true));
                 <h1 class="text-xl font-semibold text-slate-800">Giáo Viên</h1>
                 <div class="flex items-center gap-2">
                     <Button class="!bg-primary !border-0 !text-white" icon="fa-solid fa-plus mr-2" label="Tạo giáo viên" @click="showCreate = true" />
-                    <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-up mr-2" label="Nhập excel" @click="triggerImport" />
-                    <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv" class="hidden" @change="onImportChange" />
+                    <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-up mr-2" label="Nhập excel" @click="openImportDialog" />
                     <Button class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Xuất excel" @click="onExport" />
                 </div>
             </div>
@@ -345,7 +413,9 @@ onMounted(() => load(true));
         <div class="flex flex-wrap items-center gap-3 justify-between">
             <div class="flex flex-wrap items-center gap-2">
                 <button class="chip chip--soft" :class="{ 'chip--active': statusFilter === 'all' }" @click="setStatusFilter('all')">
-                    <span class="chip__icon"><i class="fa-regular fa-clock"></i></span>
+                    <span class="chip__icon">
+                        <i class="fa-regular fa-clock"></i>
+                    </span>
                     <span class="font-medium">{{ counterAll }} Giáo viên</span>
                 </button>
                 <button class="chip chip--gray" :class="{ 'chip--active': statusFilter === 'neverLoggedIn' }" @click="setStatusFilter('neverLoggedIn')">Chưa đăng nhập - {{ counterNever }}</button>
@@ -357,9 +427,7 @@ onMounted(() => load(true));
 
         <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
             <!-- loading overlay -->
-            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
-                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải danh sách giáo viên...
-            </div>
+            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải danh sách giáo viên...</div>
 
             <DataTable :value="rows" dataKey="id" v-model:selection="selection" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm staff-table">
                 <Column selectionMode="multiple" headerStyle="width: 3rem" />
@@ -380,8 +448,12 @@ onMounted(() => load(true));
                             <Avatar v-if="data.avatarUrl" :image="data.avatarUrl" shape="circle" />
                             <Avatar v-else :label="(data.name?.[0] ?? 'N').toUpperCase()" class="!bg-slate-100 !text-slate-700" shape="circle" />
                             <div class="min-w-0 leading-tight">
-                                <div class="font-medium text-slate-900 break-any">{{ data.name || '-' }}</div>
-                                <div class="text-xs text-slate-500 truncate">{{ data.email || '-' }}</div>
+                                <div class="font-medium text-slate-900 break-any">
+                                    {{ data.name || '-' }}
+                                </div>
+                                <div class="text-xs text-slate-500 truncate">
+                                    {{ data.email || '-' }}
+                                </div>
                             </div>
                         </div>
                     </template>
@@ -456,13 +528,7 @@ onMounted(() => load(true));
                 <!-- Hành động -->
                 <Column header="Hành động" headerClass="th-nowrap" headerStyle="width: 6rem; text-align: right;" bodyStyle="text-align: right;">
                     <template #body="{ data }">
-                        <Button
-                            icon="fa-solid fa-ellipsis-vertical"
-                            class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100"
-                            @click="(e) => openRowMenu(e, data)"
-                            aria-haspopup="true"
-                            aria-controls="row_actions_menu"
-                        />
+                        <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => openRowMenu(e, data)" aria-haspopup="true" aria-controls="row_actions_menu" />
                     </template>
                 </Column>
             </DataTable>
@@ -494,7 +560,9 @@ onMounted(() => load(true));
                     </span>
                     <div class="flex-1 min-w-0 text-left">
                         <div class="menu-item__label truncate">{{ item.label }}</div>
-                        <div v-if="item.sub" class="menu-item__sub truncate">{{ item.sub }}</div>
+                        <div v-if="item.sub" class="menu-item__sub truncate">
+                            {{ item.sub }}
+                        </div>
                     </div>
                 </button>
             </template>
@@ -509,8 +577,12 @@ onMounted(() => load(true));
                     <Avatar v-if="currentTeacher.avatarUrl" :image="currentTeacher.avatarUrl" shape="circle" size="large" />
                     <Avatar v-else :label="(currentTeacher.name?.[0] ?? 'N').toUpperCase()" shape="circle" class="!bg-slate-100 !text-slate-700" size="large" />
                     <div>
-                        <div class="font-semibold text-lg">{{ currentTeacher.name }}</div>
-                        <div class="text-sm text-slate-500">{{ currentTeacher.email || '-' }}</div>
+                        <div class="font-semibold text-lg">
+                            {{ currentTeacher.name }}
+                        </div>
+                        <div class="text-sm text-slate-500">
+                            {{ currentTeacher.email || '-' }}
+                        </div>
                     </div>
                 </div>
 
@@ -585,6 +657,62 @@ onMounted(() => load(true));
                 <div class="flex justify-end gap-2 mt-3">
                     <Button label="Hủy" class="p-button-text" @click="showEdit = false" />
                     <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveEdit" />
+                </div>
+            </div>
+        </Dialog>
+
+        <!-- Dialog nhập giáo viên từ Excel (giống modal học sinh) -->
+        <Dialog v-model:visible="showImportDialog" modal header="Nhập danh sách giáo viên" :style="{ width: '650px' }">
+            <div class="space-y-4">
+                <!-- Dropzone -->
+                <div class="dropzone" :class="{ 'dropzone--over': isDragOver }" @dragover.prevent="onDragOver" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
+                    <div class="dropzone-inner">
+                        <i class="fa-solid fa-cloud-arrow-up dropzone-icon"></i>
+                        <p class="dropzone-text">
+                            Kéo thả file Excel vào đây hoặc
+                            <button type="button" class="dropzone-link" @click="onClickChooseFile">chọn file từ hệ thống</button>
+                        </p>
+                        <p class="dropzone-file" v-if="selectedImportFile">
+                            Đã chọn:
+                            <strong>{{ selectedImportFile.name }}</strong>
+                        </p>
+                        <p class="dropzone-file" v-else>Chưa chọn file</p>
+                    </div>
+                </div>
+
+                <!-- Input file ẩn -->
+                <input ref="uploadFileInput" type="file" accept=".xlsx,.xls" class="hidden" @change="onImportFileChange" />
+
+                <!-- Gợi ý thứ tự cột -->
+                <div class="required-cols">
+                    <div class="required-label">Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):</div>
+                    <div class="required-box">Họ và tên, Email, Số điện thoại, Giới tính, Ngày sinh (dd-MM-yyyy), Chuyên môn, Ngày vào làm, Liên hệ khẩn cấp</div>
+                </div>
+
+                <!-- Kết quả import (nếu có) -->
+                <div v-if="importSummary" class="import-summary">
+                    <div>🔥 Kết quả import:</div>
+                    <div>
+                        Tổng bản ghi:
+                        {{ importSummary.totalRecords ?? importSummary.total ?? '-' }}
+                    </div>
+                    <div>
+                        Thành công:
+                        {{ importSummary.successCount ?? importSummary.success ?? '-' }}
+                    </div>
+                    <div>
+                        Lỗi:
+                        {{ importSummary.errorCount ?? importSummary.fail ?? '-' }}
+                    </div>
+                </div>
+
+                <!-- Footer nút -->
+                <div class="flex justify-between items-center pt-2">
+                    <Button label="Đóng" class="p-button-text" @click="showImportDialog = false" />
+                    <div class="flex gap-2">
+                        <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-excel mr-2" label="Tải mẫu Excel Import" type="button" @click="onClickDownloadTemplate" />
+                        <Button :disabled="importing" class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-cloud-arrow-up mr-2" :label="importing ? 'Đang tải lên...' : 'Tải lên'" type="button" @click="onConfirmImport" />
+                    </div>
                 </div>
             </div>
         </Dialog>
@@ -815,5 +943,74 @@ onMounted(() => load(true));
 .menu-item__sub {
     font-size: 12px;
     color: #64748b;
+}
+
+/* Dropzone import Excel (giống modal học sinh) */
+.dropzone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 32px 16px;
+    background: #f8fafc;
+    transition: all 0.15s ease;
+    text-align: center;
+}
+.dropzone--over {
+    border-color: #22c55e;
+    background: #ecfdf5;
+}
+.dropzone-inner {
+    max-width: 420px;
+    margin: 0 auto;
+}
+.dropzone-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+    color: #94a3b8;
+}
+.dropzone-text {
+    font-size: 14px;
+    color: #475569;
+}
+.dropzone-link {
+    border: none;
+    background: transparent;
+    color: #16a34a;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.dropzone-file {
+    margin-top: 4px;
+    font-size: 13px;
+    color: #64748b;
+}
+
+/* box mô tả cột */
+.required-cols {
+    font-size: 13px;
+    color: #475569;
+}
+.required-label {
+    margin-bottom: 4px;
+}
+.required-box {
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    font-size: 12px;
+    white-space: normal;
+}
+
+/* box kết quả import */
+.import-summary {
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #fefce8;
+    border: 1px solid #facc15;
+    font-size: 13px;
+    color: #854d0e;
+    line-height: 1.4;
 }
 </style>

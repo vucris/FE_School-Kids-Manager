@@ -7,7 +7,6 @@ function withApiV1(path) {
 }
 
 /* Map 1 record BE -> FE */
-/* Map 1 record BE -> FE */
 function mapHealthRecord(r = {}) {
   const s = r.student || r.studentDto || r.studentEntity || {};
   const classObj = r.clazz || r.classroom || s.clazz || s.classroom || {};
@@ -66,8 +65,6 @@ function mapHealthRecord(r = {}) {
   };
 }
 
-
-
 /* ===================== CRUD / SEARCH ===================== */
 
 /** GET /health-records/all */
@@ -102,7 +99,7 @@ export async function fetchHealthRecordsByClass(classId) {
 }
 
 /**
- * FE-side: lấy toàn bộ hồ sơ theo lớp rồi FILTER theo năm/tháng trên FE
+ * FE-side: lấy toàn bộ hồ sơ theo lớp rồi FILTER theo NĂM (month để null)
  */
 export async function fetchHealthRecordsByClassAndPeriodFE(classId, year, month) {
     const all = await fetchHealthRecordsByClass(classId);
@@ -110,6 +107,7 @@ export async function fetchHealthRecordsByClassAndPeriodFE(classId, year, month)
 
     return all.filter((r) => {
         const okYear = year ? r.recordYear === Number(year) : true;
+        // nếu month null/undefined thì không lọc theo tháng nữa
         const okMonth = month ? r.recordMonth === Number(month) : true;
         return okYear && okMonth;
     });
@@ -117,6 +115,7 @@ export async function fetchHealthRecordsByClassAndPeriodFE(classId, year, month)
 
 /**
  * Tìm kiếm theo nhiều tiêu chí bằng /search
+ * (vẫn giữ tham số month cho các chỗ khác nếu cần)
  */
 export async function searchHealthRecords({ studentId, classId, year, month } = {}) {
     const params = {};
@@ -199,16 +198,16 @@ export async function downloadHealthRecordTemplate(classId) {
 }
 
 /**
- * Import từ Excel
+ * Import từ Excel – ĐO THEO NĂM
  * POST /health-records/import
  */
-export async function importHealthRecordsFromExcel({ file, classId, recordYear, recordMonth }) {
+export async function importHealthRecordsFromExcel({ file, classId, recordYear }) {
     const url = withApiV1('/health-records/import');
     const formData = new FormData();
     formData.append('file', file);
     formData.append('classId', classId);
     formData.append('recordYear', recordYear);
-    formData.append('recordMonth', recordMonth);
+    // không gửi recordMonth nữa
 
     const res = await http.post(url, formData, {
         headers: {
@@ -226,13 +225,13 @@ export async function importHealthRecordsFromExcel({ file, classId, recordYear, 
 }
 
 /**
- * Export dữ liệu 1 lớp, 1 năm/tháng ra Excel
- * GET /health-records/class/{classId}/export?year=&month=
+ * Export dữ liệu 1 lớp, 1 NĂM ra Excel
+ * GET /health-records/class/{classId}/export?year=
  */
-export async function exportHealthRecordsToExcel({ classId, year, month }) {
+export async function exportHealthRecordsToExcel({ classId, year }) {
     const url = withApiV1(`/health-records/class/${classId}/export`);
     const res = await http.get(url, {
-        params: { year, month },
+        params: { year },
         responseType: 'blob'
     });
     return res.data; // Blob

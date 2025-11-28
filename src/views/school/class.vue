@@ -14,7 +14,15 @@ import ConfirmDialog from 'primevue/confirmdialog';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
-import { fetchClasses, exportClassesExcel, createClass, updateClass, deleteClass, fetchClassById } from '@/service/classService.js';
+import {
+    fetchClasses,
+    exportClassesExcel,
+    createClass,
+    updateClass,
+    deleteClass,
+    fetchClassById,
+    updateStudentCount // 💡 thêm hàm mới
+} from '@/service/classService.js';
 import { fetchTeachersLite } from '@/service/teacherService.js';
 
 const toast = useToast();
@@ -64,6 +72,13 @@ const rowMenuItems = ref([
         sub: 'Tên lớp, phòng, năm học...',
         command: () => onAction('edit')
     },
+    {
+        label: 'Cập nhật số học sinh',
+        icon: 'fa-solid fa-children',
+        tone: 'info',
+        sub: 'Cập nhật sĩ số hiện tại',
+        command: () => onAction('updateStudentCount')
+    },
     { separator: true },
     {
         label: 'Xoá lớp học',
@@ -83,6 +98,14 @@ function openRowMenu(e, row) {
 const showCreate = ref(false);
 const showEdit = ref(false);
 const showView = ref(false);
+
+/* 💡 Dialog cập nhật số học sinh */
+const showUpdateStudentCount = ref(false);
+const studentCountForm = ref({
+    id: null,
+    className: '',
+    currentStudentCount: 0
+});
 
 /* Giáo viên cho dropdown */
 const teacherOptions = ref([]);
@@ -124,7 +147,7 @@ const baseClassNameOptions = {
     Lá: ['Lá 1', 'Lá 2']
 };
 
-/* Phòng học gợi ý theo từng khối (bạn có thể đổi lại tên phòng tuỳ trường) */
+/* Phòng học gợi ý theo từng khối */
 const baseRoomOptions = {
     'Nhà trẻ': ['P.NT01', 'P.NT02'],
     Mầm: ['P.M01', 'P.M02', 'P.M03'],
@@ -133,7 +156,6 @@ const baseRoomOptions = {
 };
 
 /* =================== TÍNH CÁC GIÁ TRỊ ĐÃ DÙNG =================== */
-/* Tên lớp đã dùng (dựa trên allClasses) */
 const usedClassNames = computed(() => {
     const s = new Set();
     allClasses.value.forEach((c) => {
@@ -142,7 +164,6 @@ const usedClassNames = computed(() => {
     return s;
 });
 
-/* Phòng học đã dùng */
 const usedRooms = computed(() => {
     const s = new Set();
     allClasses.value.forEach((c) => {
@@ -151,7 +172,6 @@ const usedRooms = computed(() => {
     return s;
 });
 
-/* Giáo viên đã là GVCN của 1 lớp nào đó */
 const usedTeacherNames = computed(() => {
     const s = new Set();
     allClasses.value.forEach((c) => {
@@ -162,7 +182,7 @@ const usedTeacherNames = computed(() => {
     return s;
 });
 
-/* Options TÊN LỚP cho modal Tạo lớp: theo khối + loại bỏ tên đã dùng */
+/* Options TÊN LỚP cho modal Tạo lớp */
 const classNameOptions = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
@@ -170,7 +190,7 @@ const classNameOptions = computed(() => {
     return base.filter((name) => !usedClassNames.value.has(name)).map((name) => ({ label: name, value: name }));
 });
 
-/* Options PHÒNG HỌC cho modal Tạo lớp: theo khối + loại bỏ phòng đã dùng */
+/* Options PHÒNG HỌC cho modal Tạo lớp */
 const roomOptions = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
@@ -178,19 +198,16 @@ const roomOptions = computed(() => {
     return base.filter((room) => !usedRooms.value.has(room)).map((room) => ({ label: room, value: room }));
 });
 
-/* Options giáo viên cho modal TẠO lớp: loại bỏ GV đã là GVCN lớp khác */
+/* Options giáo viên cho modal TẠO lớp */
 const teacherOptionsForCreate = computed(() => {
     if (!teacherOptions.value?.length) return [];
     return teacherOptions.value.filter((t) => !usedTeacherNames.value.has(t.label));
 });
 
-/* Options giáo viên cho modal SỬA lớp:
-   - Cho phép giữ nguyên GV hiện tại của lớp
-   - Không cho chọn GV đã là GVCN lớp khác */
+/* Options giáo viên cho modal SỬA lớp */
 const teacherOptionsForEdit = computed(() => {
     if (!teacherOptions.value?.length) return [];
     if (!editForm.value.id) {
-        // fallback giống Tạo mới
         return teacherOptionsForCreate.value;
     }
     const usedExceptCurrent = new Set();
@@ -207,7 +224,7 @@ async function loadTeachers() {
     teacherOptions.value = await fetchTeachersLite();
 }
 
-/* Lấy full danh sách lớp (không filter, không phân trang) để check trùng */
+/* Lấy full danh sách lớp để check trùng */
 async function reloadAllClasses() {
     try {
         const { items } = await fetchClasses({
@@ -216,11 +233,11 @@ async function reloadAllClasses() {
         });
         allClasses.value = items;
     } catch (e) {
-        console.warn('[Classes] Không tải được full danh sách lớp cho kiểm tra GV/tên/room:', e?.message || e);
+        console.warn('[Classes] Không tải được full danh sách lớp:', e?.message || e);
     }
 }
 
-/* Load danh sách lớp theo filter + phân trang để hiển thị bảng */
+/* Load danh sách lớp theo filter + phân trang */
 async function load() {
     loading.value = true;
     try {
@@ -292,7 +309,6 @@ async function onAction(type) {
     } else if (type === 'edit') {
         try {
             const c = await fetchClassById(row.id);
-            // Tìm teacherId tương ứng theo teacherName (nếu có)
             let teacherId = null;
             if (c.teacherName && c.teacherName !== 'Chưa có giáo viên') {
                 const opt = teacherOptions.value.find((t) => t.label === c.teacherName);
@@ -316,6 +332,14 @@ async function onAction(type) {
                 life: 3000
             });
         }
+    } else if (type === 'updateStudentCount') {
+        // 💡 Mở dialog cập nhật số HS
+        studentCountForm.value = {
+            id: row.id,
+            className: row.className,
+            currentStudentCount: row.studentCurrent ?? 0
+        };
+        showUpdateStudentCount.value = true;
     } else if (type === 'delete') {
         confirmDelete(row);
     }
@@ -364,7 +388,6 @@ async function saveCreate() {
         return;
     }
 
-    // Check: tên lớp đã dùng (phòng học đã dùng đã xử lý bằng dropdown)
     if (usedClassNames.value.has(createForm.value.className)) {
         toast.add({
             severity: 'warn',
@@ -375,7 +398,6 @@ async function saveCreate() {
         return;
     }
 
-    // Check: giáo viên không được làm GVCN 2 lớp
     if (createForm.value.teacherId) {
         const opt = teacherOptions.value.find((t) => t.value === createForm.value.teacherId);
         const teacherName = opt?.label;
@@ -414,7 +436,6 @@ async function saveCreate() {
 async function saveEdit() {
     if (!editForm.value.id) return;
 
-    // Check trùng tên lớp (nếu đổi tên)
     const nameClash = allClasses.value.some((c) => c.id !== editForm.value.id && c.className === editForm.value.className);
     if (nameClash) {
         toast.add({
@@ -426,7 +447,6 @@ async function saveEdit() {
         return;
     }
 
-    // Check giáo viên: không được là GVCN 2 lớp khác nhau
     if (editForm.value.teacherId) {
         const opt = teacherOptions.value.find((t) => t.value === editForm.value.teacherId);
         const teacherName = opt?.label;
@@ -465,6 +485,43 @@ async function saveEdit() {
             severity: 'error',
             summary: 'Lỗi',
             detail: e.message || 'Không cập nhật được lớp',
+            life: 3000
+        });
+    }
+}
+
+/* 💡 SAVE UPDATE STUDENT COUNT */
+async function saveUpdateStudentCount() {
+    const id = studentCountForm.value.id;
+    const count = Number(studentCountForm.value.currentStudentCount);
+
+    if (!id) return;
+
+    if (!Number.isInteger(count) || count < 0) {
+        toast.add({
+            severity: 'warn',
+            summary: 'Giá trị không hợp lệ',
+            detail: 'Số học sinh phải là số nguyên không âm',
+            life: 2500
+        });
+        return;
+    }
+
+    try {
+        await updateStudentCount(id, count);
+        toast.add({
+            severity: 'success',
+            summary: 'Thành công',
+            detail: 'Đã cập nhật số học sinh trong lớp',
+            life: 2500
+        });
+        showUpdateStudentCount.value = false;
+        await Promise.all([load(), reloadAllClasses()]);
+    } catch (e) {
+        toast.add({
+            severity: 'error',
+            summary: 'Lỗi',
+            detail: e.message || 'Không cập nhật được số học sinh',
             life: 3000
         });
     }
@@ -663,12 +720,19 @@ onMounted(async () => {
                         <i :class="item.icon"></i>
                     </span>
                     <div class="flex-1 min-w-0 text-left">
-                        <div class="menu-item__label truncate">{{ item.label }}</div>
-                        <div v-if="item.sub" class="menu-item__sub truncate">{{ item.sub }}</div>
+                        <div class="menu-item__label truncate">
+                            {{ item.label }}
+                        </div>
+                        <div v-if="item.sub" class="menu-item__sub truncate">
+                            {{ item.sub }}
+                        </div>
                     </div>
                 </button>
             </template>
         </Menu>
+
+        <!-- Dialog tạo lớp -->
+        <!-- (giữ nguyên như bạn đang có, không đổi) -->
 
         <!-- Dialog tạo lớp -->
         <Dialog v-model:visible="showCreate" header="Tạo lớp học mới" modal :style="{ width: '520px' }">
@@ -750,7 +814,9 @@ onMounted(async () => {
         <Dialog v-model:visible="showView" header="Thông tin lớp học" modal :style="{ width: '480px' }">
             <div v-if="viewData" class="space-y-2">
                 <div class="mb-2">
-                    <div class="text-lg font-semibold text-slate-800">{{ viewData.className }}</div>
+                    <div class="text-lg font-semibold text-slate-800">
+                        {{ viewData.className }}
+                    </div>
                     <div v-if="viewData.classCode" class="text-sm text-slate-500">Mã lớp: {{ viewData.classCode }}</div>
                 </div>
                 <div><span class="font-medium">Khối lớp:</span> {{ viewData.grade || '-' }}</div>
@@ -764,6 +830,27 @@ onMounted(async () => {
                     <span class="font-medium">Số học sinh:</span>
                     {{ viewData.studentCurrent }}
                     <span v-if="viewData.studentCapacity !== null"> / {{ viewData.studentCapacity }} </span>
+                </div>
+            </div>
+        </Dialog>
+
+        <!-- 💡 Dialog cập nhật số học sinh -->
+        <Dialog v-model:visible="showUpdateStudentCount" header="Cập nhật số học sinh" modal :style="{ width: '360px' }">
+            <div class="space-y-3">
+                <div class="text-sm text-slate-600">
+                    Lớp:
+                    <span class="font-semibold text-slate-800">
+                        {{ studentCountForm.className || '-' }}
+                    </span>
+                </div>
+                <div>
+                    <label class="field-label">Số học sinh hiện tại</label>
+                    <InputText v-model.number="studentCountForm.currentStudentCount" type="number" min="0" class="w-full" />
+                    <p class="text-xs text-slate-500 mt-1">Nhập tổng số học sinh đang học trong lớp này.</p>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <Button label="Huỷ" class="p-button-text" @click="showUpdateStudentCount = false" />
+                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveUpdateStudentCount" />
                 </div>
             </div>
         </Dialog>

@@ -17,15 +17,14 @@ function mapClassRow(c) {
         roomNumber: c.roomNumber || '',
         academicYear: c.academicYear || '',
         teacherName: c.teacherName || 'Chưa có giáo viên',
-        // nếu sau này BE bổ sung thì map thêm ở đây
-        studentCurrent: c.studentCurrent ?? 0,
+
+        // 💡 Map đúng field BE trả về: currentStudentCount
+        studentCurrent: c.currentStudentCount ?? c.studentCurrent ?? 0,
+
+        // Nếu sau này BE bổ sung thì map thêm ở đây
         studentCapacity: c.studentCapacity ?? null,
         status: c.status || 'active'
     };
-
-
-
-
 }
 
 /* ---------------- CSV helper ---------------- */
@@ -126,7 +125,9 @@ export async function createClass(payload) {
             grade: payload.grade?.trim() || '',
             roomNumber: payload.roomNumber?.trim() || '',
             academicYear: payload.academicYear?.trim() || '',
-            teacherId: payload.teacherId ?? null
+            teacherId: payload.teacherId ?? null,
+            // có thể gửi null, backend handle được
+            currentStudentCount: payload.currentStudentCount ?? null
         };
         const res = await http.post(url, body, {
             headers: {
@@ -151,7 +152,8 @@ export async function updateClass(id, payload) {
             grade: payload.grade?.trim() || '',
             roomNumber: payload.roomNumber?.trim() || '',
             academicYear: payload.academicYear?.trim() || '',
-            teacherId: payload.teacherId ?? null
+            teacherId: payload.teacherId ?? null,
+            currentStudentCount: payload.currentStudentCount ?? null
         };
         const res = await http.put(url, body, {
             headers: {
@@ -175,6 +177,30 @@ export async function deleteClass(id) {
         return res?.data?.message || 'Đã xoá lớp học';
     } catch (err) {
         throw new Error(extractErrorMessage(err, 'Xoá lớp học thất bại'));
+    }
+}
+
+/* 💡 PATCH /classes/{classId}/student-count?studentCount=... */
+export async function updateStudentCount(classId, studentCount) {
+    if (!classId) throw new Error('Thiếu id lớp');
+    try {
+        const url = withApiV1(`/classes/${classId}/student-count`);
+        const res = await http.patch(url, null, {
+            params: { studentCount },
+            headers: {
+                Accept: 'application/json'
+            }
+        });
+
+        const payload = res?.data;
+        if (payload?.status && payload.status >= 400) {
+            throw new Error(payload.message || 'Cập nhật số học sinh thất bại');
+        }
+
+        const c = payload?.data || payload;
+        return mapClassRow(c);
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Cập nhật số học sinh thất bại'));
     }
 }
 
@@ -215,8 +241,8 @@ export async function exportClassesExcel() {
     } catch (err) {
         // fallback CSV nếu BE chưa có export
         const { items } = await fetchClasses({ page: 1, size: 100000 });
-        const header = 'id,className,classCode,grade,roomNumber,academicYear,teacherName\n';
-        const body = items.map((c) => [csv(c.id), csv(c.className), csv(c.classCode), csv(c.grade), csv(c.roomNumber), csv(c.academicYear), csv(c.teacherName)].join(',')).join('\n');
+        const header = 'id,className,classCode,grade,roomNumber,academicYear,teacherName,studentCurrent\n';
+        const body = items.map((c) => [csv(c.id), csv(c.className), csv(c.classCode), csv(c.grade), csv(c.roomNumber), csv(c.academicYear), csv(c.teacherName), csv(c.studentCurrent)].join(',')).join('\n');
         const BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
         const blob = new Blob([BOM, header + body], {
             type: 'text/csv;charset=utf-8;'
@@ -262,3 +288,16 @@ export async function fetchClassOptions(params = {}) {
     });
     return items.map(mapClassOption).filter(Boolean);
 }
+
+/* default export (optional) */
+export default {
+    fetchClasses,
+    fetchClassById,
+    createClass,
+    updateClass,
+    deleteClass,
+    updateStudentCount,
+    fetchClassesLite,
+    exportClassesExcel,
+    fetchClassOptions
+};

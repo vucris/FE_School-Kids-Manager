@@ -14,7 +14,14 @@ import Paginator from 'primevue/paginator';
 
 import Swal from 'sweetalert2';
 
-import { fetchStudents, exportStudentsExcel, deleteStudent, deleteStudents } from '@/service/studentService.js';
+import {
+    fetchStudents,
+    exportStudentsExcel,
+    deleteStudent,
+    deleteStudents
+} from '@/service/studentService.js';
+import { fetchClassOptions } from '@/service/classService.js';
+
 import ImportStudentsModal from '@/components/staff/ImportStudentsModal.vue';
 import CreateStudentModal from '@/components/staff/CreateStudentModal.vue';
 import ChangeStudentClassModal from '@/components/staff/ChangeStudentClassModal.vue';
@@ -24,60 +31,23 @@ const router = useRouter();
 
 /* ================= TOP FILTERS ================= */
 
+// Năm học (tạm thời fix cứng, sau này có thể lấy từ BE)
 const years = ref([
     { label: '2024 - 2025', value: '2024-2025' },
     { label: '2023 - 2024', value: '2023-2024' }
 ]);
 const selectedYear = ref(years.value[0]);
 
-// Khối mầm non: Nhà trẻ, Mầm, Chồi, Lá
-const gradeFilters = ref([
-    { label: 'Tất cả khối', value: '' },
-    { label: 'Nhà trẻ', value: 'Nhà trẻ' },
-    { label: 'Mầm', value: 'Mầm' },
-    { label: 'Chồi', value: 'Chồi' },
-    { label: 'Lá', value: 'Lá' }
-]);
+// Danh sách lớp lấy từ BE (Classes)
+const classOptions = ref([]); // [{ value, label, grade, academicYear, ... }]
+
+// Khối – sinh ra từ classOptions
+const gradeFilters = ref([{ label: 'Tất cả khối', value: '' }]);
 const selectedGrade = ref(gradeFilters.value[0]);
 
-// Mapping các lớp theo từng khối
-const CLASS_BY_GRADE = {
-    'Nhà trẻ': ['Nhà trẻ 1', 'Nhà trẻ 2'],
-    Mầm: ['Mầm 1', 'Mầm 2', 'Mầm 3'],
-    'Chồi': ['Chồi 1', 'Chồi 2'],
-    'Lá': ['Lá 1', 'Lá 2']
-};
-
-// Dropdown Lớp – sẽ build lại dựa theo selectedGrade
-const classFilters = ref([]);
-const selectedClassFilter = ref({ label: 'Tất cả lớp', value: '' });
-
-// Hàm build lại danh sách lớp theo khối
-function rebuildClassFilters() {
-    const grade = selectedGrade.value?.value;
-    let classNames = [];
-
-    if (!grade) {
-        // Không chọn khối => hiển thị tất cả lớp
-        Object.values(CLASS_BY_GRADE).forEach((arr) => {
-            classNames.push(...arr);
-        });
-    } else {
-        classNames = CLASS_BY_GRADE[grade] || [];
-    }
-
-    const opts = [
-        { label: 'Tất cả lớp', value: '' },
-        ...classNames.map((name) => ({ label: name, value: name }))
-    ];
-
-    // Giữ lại lớp đang chọn nếu vẫn tồn tại, nếu không thì reset về "Tất cả lớp"
-    const currentVal = selectedClassFilter.value?.value;
-    const found = opts.find((o) => o.value === currentVal);
-    selectedClassFilter.value = found || opts[0];
-
-    classFilters.value = opts;
-}
+// Lớp – sinh ra từ classOptions & khối
+const classFilters = ref([{ label: 'Tất cả lớp', value: '' }]);
+const selectedClassFilter = ref(classFilters.value[0]);
 
 /* ================= STATUS TABS ================= */
 
@@ -124,7 +94,7 @@ const counts = computed(() => ({
     total: allData.value.length
 }));
 
-/* ================= SWEETALERT TOAST ================= */
+/* ================= SWEETALERT ================= */
 
 const swalToast = Swal.mixin({
     toast: true,
@@ -134,6 +104,7 @@ const swalToast = Swal.mixin({
     timerProgressBar: true
 });
 
+/* disable actions while deleting to avoid duplicate clicks */
 const isDeleting = ref(false);
 
 /* ================= ROW MENU + MODALS ================= */
@@ -237,26 +208,99 @@ function formatDob(d) {
     }
 }
 
-/* ================= LOAD DATA ================= */
+/* ================= BUILD FILTERS TỪ DANH SÁCH LỚP ================= */
+
+function buildFiltersFromClasses() {
+    const all = classOptions.value || [];
+
+    // ---- Khối (grade) ----
+    const gradeSet = new Set();
+    all.forEach((c) => {
+        if (c.grade) gradeSet.add(c.grade);
+    });
+
+    const newGradeFilters = [
+        { label: 'Tất cả khối', value: '' },
+        ...Array.from(gradeSet).map((g) => ({ label: g, value: g }))
+    ];
+    gradeFilters.value = newGradeFilters;
+
+    if (!newGradeFilters.some((g) => g.value === selectedGrade.value?.value)) {
+        selectedGrade.value = newGradeFilters[0];
+    }
+
+    // ---- Lớp ----
+    const currentGrade = selectedGrade.value?.value || '';
+
+    const classesForGrade = currentGrade
+        ? all.filter((c) => c.grade === currentGrade)
+        : all;
+
+    const newClassFilters = [
+        { label: 'Tất cả lớp', value: '' },
+        ...classesForGrade.map((c) => ({
+            label: c.label || c.className,
+            value: c.label || c.className
+        }))
+    ];
+
+    classFilters.value = newClassFilters;
+
+    if (!newClassFilters.some((c) => c.value === selectedClassFilter.value?.value)) {
+        selectedClassFilter.value = newClassFilters[0];
+    }
+}
+
+/* ================= LOAD DANH SÁCH LỚP CHO FILTER ================= */
+
+async function loadClassFilters() {
+    try {
+        const year = selectedYear.value?.value;
+        // tuỳ implement fetchClassOptions của bạn – chỉ cần trả về list [{ value, label, grade, academicYear }]
+        const list = await fetchClassOptions(year ? { year } : {});
+        classOptions.value = Array.isArray(list) ? list : [];
+        buildFiltersFromClasses();
+    } catch (e) {
+        console.error('Không tải được danh sách lớp:', e?.message || e);
+        classOptions.value = [];
+        buildFiltersFromClasses();
+    }
+}
+
+/* ================= LOAD DANH SÁCH HỌC SINH ================= */
 
 async function load(isInit = false) {
     if (isInit) loadingInit.value = true;
     else loadingList.value = true;
     try {
-        // lấy tất cả để tính số lượng theo trạng thái
+        // Lấy tất cả để đếm số lượng theo status
         const all = await fetchStudents({ status: 'all', page: 1, size: 99999 });
         allData.value = all.items;
 
-        const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
+        const sort = sortField.value
+            ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}`
+            : undefined;
 
-        // Ưu tiên filter theo dropdown lớp, nếu không chọn thì dùng ô tìm kiếm lớp trong header
-        const classNameFilter = selectedClassFilter.value?.value || fClass.value || undefined;
+        // ----- MAP filter Khối + Lớp -----
+        let classNameFilter;
+
+        // 1. Nếu chọn Lớp cụ thể -> lọc đúng lớp đó
+        if (selectedClassFilter.value?.value) {
+            classNameFilter = selectedClassFilter.value.value; // "Mầm 2"
+        }
+        // 2. Không chọn lớp nhưng chọn Khối -> lọc tất cả lớp thuộc khối đó
+        else if (selectedGrade.value?.value) {
+            classNameFilter = selectedGrade.value.value; // "Mầm" -> match "Mầm 1", "Mầm 2"
+        }
+        // 3. Nếu không chọn gì mà user gõ ô Lớp trong header
+        else if (fClass.value) {
+            classNameFilter = fClass.value;
+        }
 
         const { items, total } = await fetchStudents({
             status: status.value,
-            year: selectedYear.value?.value,
-            grade: selectedGrade.value?.value || undefined, // khối: Nhà trẻ / Mầm / Chồi / Lá
-            className: classNameFilter, // tên lớp: Mầm 1, Chồi 2, ...
+            year: selectedYear.value?.value, // hiện FE-side chưa dùng, nhưng để đó sau mở rộng
+            className: classNameFilter || undefined,
             code: fCode.value || undefined,
             name: fName.value || undefined,
             parentName: fParent.value || undefined,
@@ -264,6 +308,7 @@ async function load(isInit = false) {
             size: size.value,
             sort
         });
+
         rows.value = items;
         totalRecords.value = total;
     } finally {
@@ -404,7 +449,9 @@ async function onBulkDelete() {
 
     try {
         const result = await deleteStudents(ids, { timeoutMs: 12000 });
-        const msg = result.fail ? `Xóa xong: ${result.ok}/${ids.length}. Lỗi: ${result.fail}` : `Đã xóa ${result.ok}/${ids.length} học sinh`;
+        const msg = result.fail
+            ? `Xóa xong: ${result.ok}/${ids.length}. Lỗi: ${result.fail}`
+            : `Đã xóa ${result.ok}/${ids.length} học sinh`;
         await swalToast.fire({ icon: result.fail ? 'warning' : 'success', title: msg });
         selection.value = [];
         await load(false);
@@ -434,26 +481,27 @@ watch([fCode, fName, fClass, fParent], () =>
 
 /* ================= WATCH TOP FILTERS ================= */
 
-// Đổi năm học -> reload
+// Đổi năm học -> load lại danh sách lớp & học sinh
 watch(
     () => selectedYear.value,
-    () => {
+    async () => {
+        await loadClassFilters();
         page.value = 1;
-        load(false);
+        await load(false);
     }
 );
 
-// Đổi khối -> rebuild danh sách lớp + reload
+// Đổi khối -> rebuild list lớp + load học sinh
 watch(
     () => selectedGrade.value,
     () => {
-        rebuildClassFilters();
+        buildFiltersFromClasses();
         page.value = 1;
         load(false);
     }
 );
 
-// Đổi lớp -> reload
+// Đổi lớp -> load học sinh
 watch(
     () => selectedClassFilter.value,
     () => {
@@ -464,12 +512,11 @@ watch(
 
 /* ================= LIFECYCLE ================= */
 
-onMounted(() => {
-    rebuildClassFilters(); // build lần đầu
-    load(true);
+onMounted(async () => {
+    await loadClassFilters();
+    await load(true);
 });
 </script>
-
 
 <template>
     <div class="px-4 md:px-6 lg:px-8 py-5 space-y-4">
@@ -477,26 +524,67 @@ onMounted(() => {
         <div class="flex flex-wrap items-center justify-between gap-3">
             <h1 class="text-xl font-semibold text-slate-800">Học sinh</h1>
             <div class="flex items-center gap-2">
-                <div class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-700">
+                <div
+                    class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-700"
+                >
                     <i class="fa-regular fa-clock text-primary"></i>
                     <span class="font-semibold">{{ counts.total }} học sinh</span>
                 </div>
-                <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-up mr-2" label="Nhập excel" @click="openImport" />
-                <Button class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Xuất excel" @click="onExport" />
-                <Button class="!bg-primary !border-0 !text-white" icon="fa-solid fa-plus mr-2" label="Tạo học sinh" @click="openCreate" />
+                <Button
+                    class="!bg-emerald-600 !border-0 !text-white"
+                    icon="fa-solid fa-file-arrow-up mr-2"
+                    label="Nhập excel"
+                    @click="openImport"
+                />
+                <Button
+                    class="!bg-green-600 !border-0 !text-white"
+                    icon="fa-solid fa-file-arrow-down mr-2"
+                    label="Xuất excel"
+                    @click="onExport"
+                />
+                <Button
+                    class="!bg-primary !border-0 !text-white"
+                    icon="fa-solid fa-plus mr-2"
+                    label="Tạo học sinh"
+                    @click="openCreate"
+                />
             </div>
         </div>
 
         <!-- Top filters: Năm học / Khối / Lớp -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Dropdown v-model="selectedYear" :options="years" optionLabel="label" class="w-full" placeholder="Năm học" />
-            <Dropdown v-model="selectedGrade" :options="gradeFilters" optionLabel="label" class="w-full" placeholder="Chọn khối" />
-            <Dropdown v-model="selectedClassFilter" :options="classFilters" optionLabel="label" class="w-full" placeholder="Chọn lớp" />
+            <Dropdown
+                v-model="selectedYear"
+                :options="years"
+                optionLabel="label"
+                class="w-full"
+                placeholder="Năm học"
+            />
+            <Dropdown
+                v-model="selectedGrade"
+                :options="gradeFilters"
+                optionLabel="label"
+                class="w-full"
+                placeholder="Chọn khối"
+            />
+            <Dropdown
+                v-model="selectedClassFilter"
+                :options="classFilters"
+                optionLabel="label"
+                class="w-full"
+                placeholder="Chọn lớp"
+            />
         </div>
 
         <!-- Status tabs -->
         <div class="flex flex-wrap items-center gap-4 border-b border-slate-200">
-            <button v-for="s in statusDefs" :key="s.key" class="tab" :class="[status === s.key ? 'tab--active' : '', s.bg]" @click="onStatusChange(s.key)">
+            <button
+                v-for="s in statusDefs"
+                :key="s.key"
+                class="tab"
+                :class="[status === s.key ? 'tab--active' : '', s.bg]"
+                @click="onStatusChange(s.key)"
+            >
                 <span>{{ s.label }}</span>
                 <span class="tab__badge">{{ counts[s.key] || 0 }}</span>
             </button>
@@ -504,27 +592,76 @@ onMounted(() => {
 
         <!-- Bulk actions -->
         <div class="flex flex-wrap items-center gap-2">
-            <Button class="!bg-amber-500 !border-0 !text-white" icon="fa-solid fa-right-left mr-2" label="Chuyển lớp" @click="onBulk('class')" />
-            <Button class="!bg-rose-500 !border-0 !text-white" icon="fa-solid fa-user-minus mr-2" label="Thôi học" @click="onBulk('drop')" />
-            <Button class="!bg-orange-500 !border-0 !text-white" icon="fa-solid fa-tent-arrow-left-right mr-2" label="Bảo lưu" @click="onBulk('reserve')" />
-            <Button class="!bg-red-600 !border-0 !text-white" :class="{ 'opacity-60 pointer-events-none': isDeleting }" :disabled="isDeleting" icon="fa-regular fa-trash-can mr-2" label="Xóa học sinh" @click="onBulk('delete')" />
+            <Button
+                class="!bg-amber-500 !border-0 !text-white"
+                icon="fa-solid fa-right-left mr-2"
+                label="Chuyển lớp"
+                @click="onBulk('class')"
+            />
+            <Button
+                class="!bg-rose-500 !border-0 !text-white"
+                icon="fa-solid fa-user-minus mr-2"
+                label="Thôi học"
+                @click="onBulk('drop')"
+            />
+            <Button
+                class="!bg-orange-500 !border-0 !text-white"
+                icon="fa-solid fa-tent-arrow-left-right mr-2"
+                label="Bảo lưu"
+                @click="onBulk('reserve')"
+            />
+            <Button
+                class="!bg-red-600 !border-0 !text-white"
+                :class="{ 'opacity-60 pointer-events-none': isDeleting }"
+                :disabled="isDeleting"
+                icon="fa-regular fa-trash-can mr-2"
+                label="Xóa học sinh"
+                @click="onBulk('delete')"
+            />
         </div>
 
         <!-- Table -->
-        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
+        <div
+            class="rounded-xl border border-slate-200 overflow-hidden bg-white relative"
+        >
             <!-- Loading overlay -->
-            <div v-if="loadingInit || loadingList" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu học sinh...</div>
+            <div
+                v-if="loadingInit || loadingList"
+                class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm"
+            >
+                <i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang tải dữ liệu học sinh...
+            </div>
 
-            <DataTable :value="rows" v-model:selection="selection" dataKey="id" :rows="size" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
+            <DataTable
+                :value="rows"
+                v-model:selection="selection"
+                dataKey="id"
+                :rows="size"
+                responsiveLayout="scroll"
+                :rowHover="true"
+                class="p-datatable-sm"
+            >
                 <Column selectionMode="multiple" headerStyle="width: 3rem" />
-                <Column header="#" :body="(_, opt) => opt.rowIndex + 1" headerStyle="width: 4rem" />
+                <Column
+                    header="#"
+                    :body="(_, opt) => opt.rowIndex + 1"
+                    headerStyle="width: 4rem"
+                />
 
                 <!-- Mã học sinh -->
                 <Column>
                     <template #header>
                         <div class="header-filter">
-                            <InputText v-model="fCode" class="w-full" placeholder="Mã học sinh" />
-                            <button class="sort-btn" @click="onSort('code')" title="Sắp xếp theo mã">
+                            <InputText
+                                v-model="fCode"
+                                class="w-full"
+                                placeholder="Mã học sinh"
+                            />
+                            <button
+                                class="sort-btn"
+                                @click="onSort('code')"
+                                title="Sắp xếp theo mã"
+                            >
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
@@ -538,21 +675,40 @@ onMounted(() => {
                 <Column>
                     <template #header>
                         <div class="header-filter">
-                            <InputText v-model="fName" class="w-full" placeholder="Tên học sinh" />
-                            <button class="sort-btn" @click="onSort('name')" title="Sắp xếp theo tên">
+                            <InputText
+                                v-model="fName"
+                                class="w-full"
+                                placeholder="Tên học sinh"
+                            />
+                            <button
+                                class="sort-btn"
+                                @click="onSort('name')"
+                                title="Sắp xếp theo tên"
+                            >
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
                     </template>
                     <template #body="{ data }">
                         <div class="flex items-center gap-3">
-                            <Avatar :label="(data.name?.[0] ?? 'H').toUpperCase()" class="!bg-slate-100 !text-slate-700" />
+                            <Avatar
+                                :label="(data.name?.[0] ?? 'H').toUpperCase()"
+                                class="!bg-slate-100 !text-slate-700"
+                            />
                             <div class="min-w-0">
-                                <div class="font-semibold text-slate-900 truncate hover:underline cursor-pointer" @click="openProfile(data)">
+                                <div
+                                    class="font-semibold text-slate-900 truncate hover:underline cursor-pointer"
+                                    @click="openProfile(data)"
+                                >
                                     {{ data.name }}
                                 </div>
-                                <div class="text-slate-500 text-sm flex items-center gap-3">
-                                    <span><i class="fa-regular fa-calendar"></i> {{ formatDob(data.dob) }}</span>
+                                <div
+                                    class="text-slate-500 text-sm flex items-center gap-3"
+                                >
+                                    <span
+                                        ><i class="fa-regular fa-calendar"></i>
+                                        {{ formatDob(data.dob) }}</span
+                                    >
                                     <span class="flex items-center gap-1">
                                         <i :class="genderIcon(data.gender)"></i>
                                         {{ data.gender === 'F' ? 'Nữ' : 'Nam' }}
@@ -568,7 +724,11 @@ onMounted(() => {
                     <template #header>
                         <div class="header-filter">
                             <InputText v-model="fClass" class="w-full" placeholder="Lớp" />
-                            <button class="sort-btn" @click="onSort('className')" title="Sắp xếp theo lớp">
+                            <button
+                                class="sort-btn"
+                                @click="onSort('className')"
+                                title="Sắp xếp theo lớp"
+                            >
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
@@ -582,22 +742,40 @@ onMounted(() => {
                 <Column>
                     <template #header>
                         <div class="header-filter">
-                            <InputText v-model="fParent" class="w-full" placeholder="Tên phụ huynh" />
-                            <button class="sort-btn" @click="onSort('parentName')" title="Sắp xếp theo phụ huynh">
+                            <InputText
+                                v-model="fParent"
+                                class="w-full"
+                                placeholder="Tên phụ huynh"
+                            />
+                            <button
+                                class="sort-btn"
+                                @click="onSort('parentName')"
+                                title="Sắp xếp theo phụ huynh"
+                            >
                                 <i class="fa-solid fa-up-down"></i>
                             </button>
                         </div>
                     </template>
                     <template #body="{ data }">
                         <div class="text-slate-900">{{ data.parentName || '-' }}</div>
-                        <div class="text-slate-500 text-sm"><i class="fa-solid fa-phone"></i> {{ data.phone || '-' }}</div>
+                        <div class="text-slate-500 text-sm">
+                            <i class="fa-solid fa-phone"></i> {{ data.phone || '-' }}
+                        </div>
                     </template>
                 </Column>
 
                 <!-- Hành động -->
-                <Column header="Hành động" headerStyle="width: 6rem; text-align: right;" bodyStyle="text-align: right;">
+                <Column
+                    header="Hành động"
+                    headerStyle="width: 6rem; text-align: right;"
+                    bodyStyle="text-align: right;"
+                >
                     <template #body="{ data }">
-                        <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => !isDeleting && openRowMenu(e, data)" />
+                        <Button
+                            icon="fa-solid fa-ellipsis-vertical"
+                            class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100"
+                            @click="(e) => !isDeleting && openRowMenu(e, data)"
+                        />
                     </template>
                 </Column>
             </DataTable>
@@ -608,7 +786,13 @@ onMounted(() => {
         </div>
 
         <!-- Row menu + modals -->
-        <Menu ref="rowMenu" :model="rowMenuItems" :popup="true" appendTo="body" :pt="{ menu: { class: 'rowmenu-panel' } }">
+        <Menu
+            ref="rowMenu"
+            :model="rowMenuItems"
+            :popup="true"
+            appendTo="body"
+            :pt="{ menu: { class: 'rowmenu-panel' } }"
+        >
             <template #item="{ item, props }">
                 <div v-if="item.separator" class="rowmenu-sep"></div>
                 <button
@@ -638,10 +822,22 @@ onMounted(() => {
             </template>
         </Menu>
 
-        <ImportStudentsModal v-model:modelValue="showImport" @imported="onImported" :useServerTemplate="true" />
+        <ImportStudentsModal
+            v-model:modelValue="showImport"
+            @imported="onImported"
+            :useServerTemplate="true"
+        />
         <CreateStudentModal v-model:modelValue="showCreate" @created="onStudentCreated" />
-        <ChangeStudentClassModal v-model:modelValue="showChangeClass" :student="studentForChange" @changed="onClassChanged" />
-        <StudentProfileModal v-model:modelValue="showProfile" :studentId="studentIdForProfile" @updated="onProfileUpdated" />
+        <ChangeStudentClassModal
+            v-model:modelValue="showChangeClass"
+            :student="studentForChange"
+            @changed="onClassChanged"
+        />
+        <StudentProfileModal
+            v-model:modelValue="showProfile"
+            :studentId="studentIdForProfile"
+            @updated="onProfileUpdated"
+        />
     </div>
 </template>
 
@@ -750,7 +946,7 @@ onMounted(() => {
 }
 .menu-item--danger .menu-item__icon {
     background: #fef2f2;
-    color: #dc2626;7
+    color: #dc2626;
 }
 .menu-item__label {
     font-size: 14px;
@@ -760,7 +956,7 @@ onMounted(() => {
 .menu-item__sub {
     font-size: 12px;
     color: #64748b;
-}
+}7
 .menu-item__kbd {
     margin-left: 10px;
     font-size: 11px;
