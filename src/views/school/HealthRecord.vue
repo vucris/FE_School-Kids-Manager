@@ -189,6 +189,32 @@ const rows = computed(() => {
     return result;
 });
 
+/* ====== Helper màu tình trạng dinh dưỡng ====== */
+const nutritionBaseClass = 'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border';
+
+function getNutritionColorClass(status) {
+    if (!status) return 'nutri-other';
+    const s = status.toLowerCase();
+
+    // Bình thường -> xanh lá
+    if (s.includes('bình thường')) {
+        return 'nutri-normal';
+    }
+
+    // Thiếu cân / suy dinh dưỡng -> vàng/cam
+    if (s.includes('thiếu cân') || s.includes('suy dinh dưỡng')) {
+        return 'nutri-under';
+    }
+
+    // Thừa cân / béo phì -> đỏ/hồng
+    if (s.includes('thừa cân') || s.includes('béo phì')) {
+        return 'nutri-over';
+    }
+
+    // Khác
+    return 'nutri-other';
+}
+
 /* ====== Hành động: sửa / xóa ====== */
 
 async function onEdit(row) {
@@ -380,7 +406,7 @@ async function onImport() {
         const res = await importHealthRecordsFromExcel({
             file: selectedFile.value,
             classId: selectedClassId.value,
-            recordYear: year.value // 🎯 chỉ đo theo NĂM
+            recordYear: year.value // đo theo NĂM
         });
 
         lastImportResult.value = res || null;
@@ -411,7 +437,7 @@ async function onExport() {
     try {
         const blob = await exportHealthRecordsToExcel({
             classId: selectedClassId.value,
-            year: year.value // 🎯 export theo NĂM
+            year: year.value // export theo NĂM
         });
         const url = window.URL.createObjectURL(new Blob([blob]));
         const a = document.createElement('a');
@@ -482,7 +508,18 @@ onMounted(async () => {
                     </div>
                     <div>
                         <label class="label">Năm</label>
-                        <Dropdown v-model="year" class="w-full" :options="[year - 1, year, year + 1].map((y) => ({ label: String(y), value: y }))" optionLabel="label" optionValue="value" />
+                        <Dropdown
+                            v-model="year"
+                            class="w-full"
+                            :options="
+                                [year - 1, year, year + 1].map((y) => ({
+                                    label: String(y),
+                                    value: y
+                                }))
+                            "
+                            optionLabel="label"
+                            optionValue="value"
+                        />
                     </div>
                     <div>
                         <label class="label">Tìm học sinh</label>
@@ -492,7 +529,7 @@ onMounted(async () => {
             </template>
         </Card>
 
-        <!-- Bảng dữ liệu: có overflow-x để kéo ngang -->
+        <!-- Bảng dữ liệu -->
         <div class="overflow-x-auto rounded-2xl ring-1 ring-slate-200 bg-white shadow-sm">
             <table class="min-w-full border-separate border-spacing-0">
                 <thead>
@@ -556,13 +593,16 @@ onMounted(async () => {
                                 {{ r.bmi ?? 'Không' }}
                             </span>
                         </td>
+
+                        <!-- Tình trạng dinh dưỡng với màu theo trạng thái -->
                         <td class="td">
-                            <span v-if="r.nutritionStatus" class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                            <span v-if="r.nutritionStatus" :class="[nutritionBaseClass, getNutritionColorClass(r.nutritionStatus)]">
                                 <i class="fa-solid fa-utensils mr-1 text-[10px]"></i>
                                 {{ r.nutritionStatus }}
                             </span>
                             <span v-else class="inline-flex items-center text-xs text-slate-400 italic"> Không </span>
                         </td>
+
                         <td class="td text-center text-[14px]">
                             <span v-if="r.bloodType" class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-100">
                                 {{ r.bloodType }}
@@ -631,7 +671,10 @@ onMounted(async () => {
                         Kỳ:
                         <span class="font-semibold">Năm {{ year }}</span>
                     </div>
-                    <div class="mt-1 text-xs text-slate-500">Hệ thống sẽ tự tính <b>Tháng tuổi</b> và <b>BMI</b> từ cân nặng / chiều cao, không cần nhập tay.</div>
+                    <div class="mt-1 text-xs text-slate-500">
+                        • File mẫu <b>không có cột "Tháng tuổi" và "BMI"</b>, hệ thống sẽ tự tính từ cân nặng / chiều cao, không cần nhập tay.<br />
+                        • Dòng đầu tiên sau header là <b>dòng DEMO</b> (ví dụ minh họa), backend sẽ <b>bỏ qua, không lưu vào DB</b>.
+                    </div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3">
@@ -799,5 +842,30 @@ onMounted(async () => {
 }
 .td-last {
     border-right: 1px solid #e5e7eb;
+}
+
+/* Màu cho pill tình trạng dinh dưỡng */
+.nutri-normal {
+    background-color: #ecfdf5; /* emerald-50 */
+    color: #047857; /* emerald-700 */
+    border-color: #bbf7d0; /* emerald-200 */
+}
+
+.nutri-under {
+    background-color: #fffbeb; /* amber-50 */
+    color: #92400e; /* amber-700 */
+    border-color: #fde68a; /* amber-200 */
+}
+
+.nutri-over {
+    background-color: #fff1f2; /* rose-50 */
+    color: #be123c; /* rose-700 */
+    border-color: #fecdd3; /* rose-200 */
+}
+
+.nutri-other {
+    background-color: #eff6ff; /* blue-50 */
+    color: #1d4ed8; /* blue-700 */
+    border-color: #bfdbfe; /* blue-200 */
 }
 </style>

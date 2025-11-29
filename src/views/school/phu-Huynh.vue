@@ -25,7 +25,7 @@ const rows = ref([]);
 const totalRecords = ref(0);
 
 const page = ref(1);
-const size = ref(10);
+const size = ref(50);
 const sortField = ref('');
 const sortOrder = ref(1);
 
@@ -544,7 +544,7 @@ onMounted(() => load(true));
 
         <!-- Pagination -->
         <div class="border-t border-slate-200 mt-2 flex justify-end">
-            <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[10, 20, 50]" @page="onChangePage" />
+            <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[50,100]" @page="onChangePage" />
         </div>
 
         <!-- Row menu -->

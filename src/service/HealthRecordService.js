@@ -8,61 +8,41 @@ function withApiV1(path) {
 
 /* Map 1 record BE -> FE */
 function mapHealthRecord(r = {}) {
-  const s = r.student || r.studentDto || r.studentEntity || {};
-  const classObj = r.clazz || r.classroom || s.clazz || s.classroom || {};
+    const s = r.student || r.studentDto || r.studentEntity || {};
+    const classObj = r.clazz || r.classroom || s.clazz || s.classroom || {};
 
-  const studentId =
-    r.studentId ?? s.studentId ?? s.id ?? null;
+    const studentId = r.studentId ?? s.studentId ?? s.id ?? null;
 
-  const studentCode =
-    r.studentCode ||
-    s.studentCode ||
-    s.code ||
-    s.student_code ||
-    '';
+    const studentCode = r.studentCode || s.studentCode || s.code || s.student_code || '';
 
-  const studentName =
-    r.studentName ||
-    s.fullName ||
-    s.name ||
-    '';
+    const studentName = r.studentName || s.fullName || s.name || '';
 
-  const classId =
-    r.classId ??
-    classObj.id ??
-    classObj.classId ??
-    classObj.class_id ??
-    null;
+    const classId = r.classId ?? classObj.id ?? classObj.classId ?? classObj.class_id ?? null;
 
-  const className =
-    r.className ||
-    classObj.className ||
-    classObj.name ||
-    classObj.class_code ||
-    '';
+    const className = r.className || classObj.className || classObj.name || classObj.class_code || '';
 
-  return {
-    id: r.id,
-    studentId,
-    studentCode,
-    studentName,
-    classId,
-    className,
-    recordYear: r.recordYear,
-    recordMonth: r.recordMonth,
-    ageInMonths: r.ageInMonths,
-    weightKg: r.weightKg,
-    heightCm: r.heightCm,
-    bmi: r.bmi,
-    nutritionStatus: r.nutritionStatus,
-    bloodType: r.bloodType,
-    knowsSwimming: r.knowsSwimming,
-    eyeIssue: r.eyeIssue,
-    dentalIssue: r.dentalIssue,
-    note: r.note,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt
-  };
+    return {
+        id: r.id,
+        studentId,
+        studentCode,
+        studentName,
+        classId,
+        className,
+        recordYear: r.recordYear,
+        recordMonth: r.recordMonth,
+        ageInMonths: r.ageInMonths,
+        weightKg: r.weightKg,
+        heightCm: r.heightCm,
+        bmi: r.bmi,
+        nutritionStatus: r.nutritionStatus,
+        bloodType: r.bloodType,
+        knowsSwimming: r.knowsSwimming,
+        eyeIssue: r.eyeIssue,
+        dentalIssue: r.dentalIssue,
+        note: r.note,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt
+    };
 }
 
 /* ===================== CRUD / SEARCH ===================== */
@@ -115,7 +95,6 @@ export async function fetchHealthRecordsByClassAndPeriodFE(classId, year, month)
 
 /**
  * Tìm kiếm theo nhiều tiêu chí bằng /search
- * (vẫn giữ tham số month cho các chỗ khác nếu cần)
  */
 export async function searchHealthRecords({ studentId, classId, year, month } = {}) {
     const params = {};
@@ -198,8 +177,9 @@ export async function downloadHealthRecordTemplate(classId) {
 }
 
 /**
- * Import từ Excel – ĐO THEO NĂM
+ * Import từ Excel – gửi theo NĂM, tháng cố định (ví dụ: 6)
  * POST /health-records/import
+ * BE: @RequestParam file, classId, recordYear, recordMonth
  */
 export async function importHealthRecordsFromExcel({ file, classId, recordYear }) {
     const url = withApiV1('/health-records/import');
@@ -207,7 +187,8 @@ export async function importHealthRecordsFromExcel({ file, classId, recordYear }
     formData.append('file', file);
     formData.append('classId', classId);
     formData.append('recordYear', recordYear);
-    // không gửi recordMonth nữa
+    // FE đo theo NĂM, nhưng BE cần recordMonth => cố định tháng 6
+    formData.append('recordMonth', 6);
 
     const res = await http.post(url, formData, {
         headers: {
@@ -226,12 +207,13 @@ export async function importHealthRecordsFromExcel({ file, classId, recordYear }
 
 /**
  * Export dữ liệu 1 lớp, 1 NĂM ra Excel
- * GET /health-records/class/{classId}/export?year=
+ * GET /health-records/class/{classId}/export?year=&month=
+ * FE vẫn chọn theo NĂM, month fix 6 cho thống nhất
  */
 export async function exportHealthRecordsToExcel({ classId, year }) {
     const url = withApiV1(`/health-records/class/${classId}/export`);
     const res = await http.get(url, {
-        params: { year },
+        params: { year, month: 6 },
         responseType: 'blob'
     });
     return res.data; // Blob
