@@ -17,19 +17,7 @@ import Swal from 'sweetalert2';
 
 import { fetchClassOptions } from '@/service/classService.js';
 import { fetchStudentsByClass } from '@/service/studentService.js';
-import {
-    fetchFeesByClassAndSemesterYear,
-    fetchFeeSummary,
-    fetchAvailableSemesters,
-    fetchAvailableYears,
-    createBulkFees,
-    downloadFeeTemplate,
-    createFeesFromExcel,
-    payFee,
-    fetchFeeDetail, // ✅ NEW
-    deleteFee,
-    updateOverdueFees
-} from '@/service/fee.js';
+import { fetchFeesByClassAndSemesterYear, fetchFeeSummary, fetchAvailableYears, createBulkFees, downloadFeeTemplate, createFeesFromExcel, payFee, fetchFeeDetail, deleteFee, updateOverdueFees } from '@/service/fee.js';
 
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser } from '@/service/authService.js';
@@ -38,17 +26,22 @@ import { getUsernameFromUser } from '@/service/authService.js';
 const auth = useAuthStore();
 const currentUser = computed(() => getUsernameFromUser(auth?.user) || 'system');
 
-/* ===== Route – nhận classId/semester/year từ màn Đợt thu ===== */
+/* ===== Route – nhận classId/month/year từ màn Đợt thu ===== */
 const route = useRoute();
 
 /* ===== Data filter / combobox ===== */
 const classes = ref([]);
-const semesters = ref([]);
+const months = ref(
+    Array.from({ length: 12 }, (_, i) => ({
+        label: `Tháng ${i + 1}`,
+        value: i + 1
+    }))
+);
 const years = ref([]);
 
 const selectedClass = ref(null);
-const selectedSemester = ref(null);
-const selectedYear = ref(null);
+const selectedMonth = ref(new Date().getMonth() + 1); // 1–12
+const selectedYear = ref(new Date().getFullYear());
 
 const statusFilter = ref('ALL');
 const keyword = ref('');
@@ -268,36 +261,40 @@ async function loadClasses() {
     }
 }
 
+/* Chỉ lấy danh sách năm, tháng là cố định 1–12 */
 async function loadSemestersAndYears() {
     try {
-        const [sems, yrs] = await Promise.all([fetchAvailableSemesters(), fetchAvailableYears()]);
+        const yrs = await fetchAvailableYears();
 
-        semesters.value = sems && sems.length ? sems : ['HK1', 'HK2'];
         years.value = yrs && yrs.length ? yrs : [new Date().getFullYear()];
 
-        if (!selectedSemester.value && semesters.value.length) {
-            selectedSemester.value = semesters.value[0];
-        }
         if (!selectedYear.value && years.value.length) {
             selectedYear.value = years.value[0];
         }
+
+        if (!selectedMonth.value) {
+            selectedMonth.value = new Date().getMonth() + 1;
+        }
     } catch (e) {
         console.error(e);
-        semesters.value = ['HK1', 'HK2'];
         years.value = [new Date().getFullYear()];
-        if (!selectedSemester.value) selectedSemester.value = semesters.value[0];
         if (!selectedYear.value) selectedYear.value = years.value[0];
+        if (!selectedMonth.value) selectedMonth.value = new Date().getMonth() + 1;
     }
 }
 
 /* Đọc query từ router, gán lại bộ lọc nếu có
-   /fees?classId=90003&semester=HK1&year=2024  */
+   /fees?classId=90003&month=1&year=2024  (vẫn hỗ trợ semester=1 cho tương thích) */
 function applyRouteQueryDefaults() {
     const q = route.query || {};
 
-    if (q.semester) {
-        const sem = semesters.value.find((s) => String(s) === String(q.semester));
-        if (sem) selectedSemester.value = sem;
+    // Hỗ trợ cả ?month= và ?semester=
+    const monthParam = q.month || q.semester;
+    if (monthParam != null) {
+        const m = Number(monthParam);
+        if (!Number.isNaN(m) && m >= 1 && m <= 12) {
+            selectedMonth.value = m;
+        }
     }
 
     if (q.year) {
@@ -313,7 +310,7 @@ function applyRouteQueryDefaults() {
 }
 
 async function loadData({ showToast = false } = {}) {
-    if (!selectedClass.value || !selectedSemester.value || !selectedYear.value) return;
+    if (!selectedClass.value || !selectedMonth.value || !selectedYear.value) return;
 
     loadingList.value = true;
     errorMessage.value = '';
@@ -323,12 +320,12 @@ async function loadData({ showToast = false } = {}) {
             fetchStudentsByClass(selectedClass.value.id),
             fetchFeesByClassAndSemesterYear({
                 classId: selectedClass.value.id,
-                semester: selectedSemester.value,
+                semester: selectedMonth.value, // 👈 gửi số tháng vào field semester
                 year: selectedYear.value
             }),
             fetchFeeSummary({
                 classId: selectedClass.value.id,
-                semester: selectedSemester.value,
+                semester: selectedMonth.value, // 👈
                 year: selectedYear.value
             })
         ]);
@@ -377,7 +374,7 @@ async function confirmBulkCreate() {
     try {
         await createBulkFees({
             classId: selectedClass.value.id,
-            semester: selectedSemester.value,
+            semester: selectedMonth.value, // 👈 tạo theo tháng
             year: selectedYear.value,
             amount: bulkAmount.value,
             dueDate: bulkDueDate.value
@@ -635,7 +632,7 @@ async function init() {
     loadingInit.value = true;
     try {
         await Promise.all([loadClasses(), loadSemestersAndYears()]);
-        applyRouteQueryDefaults(); // đọc query từ màn Đợt thu
+        applyRouteQueryDefaults(); // đọc query từ màn Đợt thu (classId, month, year)
         isReadyToReload.value = true;
         await loadData();
     } finally {
@@ -643,8 +640,8 @@ async function init() {
     }
 }
 
-/* Reload khi đổi class/semester/year (sau khi init xong) */
-watch([selectedClass, selectedSemester, selectedYear], () => {
+/* Reload khi đổi class/month/year (sau khi init xong) */
+watch([selectedClass, selectedMonth, selectedYear], () => {
     if (!isReadyToReload.value) return;
     first.value = 0;
     loadData();
@@ -661,7 +658,7 @@ onMounted(init);
                 <i class="fa-solid fa-money-check-dollar text-2xl text-primary"></i>
                 <div>
                     <div class="text-2xl font-extrabold tracking-tight text-slate-800">Quản lý học phí</div>
-                    <div class="text-slate-500 text-sm">Theo dõi, thu học phí và tổng hợp theo lớp – kỳ – năm</div>
+                    <div class="text-slate-500 text-sm">Theo dõi, thu học phí và tổng hợp theo lớp – tháng – năm</div>
                 </div>
             </div>
 
@@ -688,8 +685,8 @@ onMounted(init);
                         <Dropdown v-model="selectedClass" :options="classes" optionLabel="name" class="w-full" placeholder="Chọn lớp" />
                     </div>
                     <div>
-                        <label class="label">Kỳ học</label>
-                        <Dropdown v-model="selectedSemester" :options="semesters" class="w-full" placeholder="Chọn kỳ" />
+                        <label class="label">Tháng</label>
+                        <Dropdown v-model="selectedMonth" :options="months" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn tháng" />
                     </div>
                     <div>
                         <label class="label">Năm</label>
@@ -727,7 +724,7 @@ onMounted(init);
                     <div class="flex items-center justify-between">
                         <div>
                             <div class="text-xs uppercase tracking-wide text-slate-500 font-semibold">Tổng quan</div>
-                            <div class="text-lg font-bold text-slate-800 mt-1">{{ summary.className }} • {{ summary.semester }} / {{ summary.year }}</div>
+                            <div class="text-lg font-bold text-slate-800 mt-1">{{ summary.className }} • Tháng {{ summary.semester }} / {{ summary.year }}</div>
                             <div class="text-xs text-slate-500 mt-1">Tổng {{ summary.totalStudents }} học sinh</div>
                         </div>
                         <i class="fa-solid fa-users text-3xl text-primary/70"></i>
@@ -852,8 +849,8 @@ onMounted(init);
                 <div class="text-sm text-slate-700">
                     Lớp:
                     <b>{{ selectedClass?.name }}</b>
-                    • Kỳ:
-                    <b>{{ selectedSemester }}</b> /
+                    • Tháng:
+                    <b>{{ selectedMonth }}</b> /
                     <b>{{ selectedYear }}</b>
                 </div>
                 <div class="space-y-3">
@@ -867,7 +864,8 @@ onMounted(init);
                     </div>
                     <div class="text-xs text-slate-500">
                         Hệ thống sẽ tạo một bản ghi học phí
-                        <b>PENDING</b> cho tất cả học sinh chưa có học phí trong lớp.
+                        <b>PENDING</b> cho tất cả học sinh chưa có học phí trong lớp ở <b>tháng {{ selectedMonth }}/{{ selectedYear }}</b
+                        >.
                     </div>
                 </div>
                 <div class="flex justify-end gap-2">
@@ -899,7 +897,7 @@ onMounted(init);
                 <div>
                     <div class="text-xs text-slate-500 mb-1">Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):</div>
                     <div class="text-xs px-3 py-2 rounded-lg bg-slate-50 border border-dashed border-slate-200 text-slate-600">Mã Học Sinh, Họ Tên, Mã Lớp, Tên Lớp, Số Tiền (VNĐ), Ghi Chú</div>
-                    <div class="mt-1 text-[11px] text-slate-400">Năm học, Học kỳ và Hạn thanh toán được nhập ở phần "THÔNG TIN CHUNG" trong file (các ô B2, B3, B4).</div>
+                    <div class="mt-1 text-[11px] text-slate-400">Năm học, Học kỳ/Tháng và Hạn thanh toán được nhập ở phần "THÔNG TIN CHUNG" trong file (các ô B2, B3, B4).</div>
                 </div>
 
                 <div class="flex justify-between items-center pt-1">
@@ -971,7 +969,9 @@ onMounted(init);
                         <div class="text-xs text-slate-600 space-y-1">
                             <div>
                                 Lớp:
-                                <b>{{ detailData.className || detailBaseRow?.className || selectedClass?.name }}</b>
+                                <b>
+                                    {{ detailData.className || detailBaseRow?.className || selectedClass?.name }}
+                                </b>
                             </div>
                             <div v-if="detailData.dateOfBirth">Ngày sinh: {{ formatDate(detailData.dateOfBirth) }}</div>
                             <div v-if="detailData.parentName">Phụ huynh: {{ detailData.parentName }}</div>
@@ -1026,7 +1026,9 @@ onMounted(init);
                         <tbody>
                             <tr v-for="(item, idx) in detailData.items || []" :key="idx" class="border-t last:border-b-0">
                                 <td class="td">{{ idx + 1 }}</td>
-                                <td class="td">{{ item.name || item.feeName }}</td>
+                                <td class="td">
+                                    {{ item.name || item.feeName }}
+                                </td>
                                 <td class="td text-right">
                                     {{ formatCurrency(item.amount) }}
                                 </td>
@@ -1053,7 +1055,7 @@ onMounted(init);
                     </div>
                     <div>
                         <div class="label text-[12px]">Lớp</div>
-                        <div class="px-3 py-[7px] rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">{{ selectedClass?.name || 'Chưa chọn lớp' }} • {{ selectedSemester }} / {{ selectedYear }}</div>
+                        <div class="px-3 py-[7px] rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">{{ selectedClass?.name || 'Chưa chọn lớp' }} • Tháng {{ selectedMonth }} / {{ selectedYear }}</div>
                     </div>
                 </div>
 

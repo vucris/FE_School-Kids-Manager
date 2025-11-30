@@ -3,8 +3,8 @@ import { useLayout } from '@/layout/composables/layout';
 import AppConfigurator from './AppConfigurator.vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth.js';
+import NotificationBell from '@/components/NotificationBell.vue';
 
-// ✅ Dùng SweetAlert2 (từ plugin)
 import { getCurrentInstance } from 'vue';
 const { proxy } = getCurrentInstance();
 
@@ -13,7 +13,6 @@ const router = useRouter();
 const auth = useAuthStore();
 
 async function onLogout() {
-    // 🟢 Hỏi người dùng có chắc chắn đăng xuất không
     const result = await proxy.$swal.fire({
         title: 'Xác nhận đăng xuất?',
         text: 'Bạn có chắc muốn đăng xuất khỏi hệ thống?',
@@ -55,6 +54,9 @@ async function onLogout() {
                 <i :class="['pi', { 'pi-moon': isDarkTheme, 'pi-sun': !isDarkTheme }]"></i>
             </button>
 
+            <!-- 🔔 Chuông thông báo -->
+            <NotificationBell />
+
             <div class="layout-topbar-menu">
                 <router-link to="/profile" class="layout-topbar-action" role="button"> <i class="pi pi-user"></i><span>Hồ sơ</span> </router-link>
 
@@ -62,9 +64,9 @@ async function onLogout() {
 
                 <router-link to="/auth/change-password" class="layout-topbar-action" role="button"> <i class="pi pi-key"></i><span>Đổi mật khẩu</span> </router-link>
 
-                <router-link to="/notifications" class="layout-topbar-action" role="button"> <i class="pi pi-bell"></i><span>Thông báo</span> </router-link>
+                <!-- Nếu bạn vẫn muốn có trang riêng /notifications thì giữ link này -->
+                <router-link to="/notifications" class="layout-topbar-action" role="button"> <i class="pi pi-bell"></i><span>Trang thông báo</span> </router-link>
 
-                <!-- ✅ Nút đăng xuất có xác nhận -->
                 <button type="button" class="layout-topbar-action" @click="onLogout"><i class="pi pi-sign-out"></i><span>Đăng xuất</span></button>
             </div>
         </div>

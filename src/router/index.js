@@ -90,11 +90,7 @@ const router = createRouter({
                     name: 'ReportAttendance',
                     component: () => import('@/views/school/report/ReportAttendance.vue')
                 },
-                {
-                    path: 'school/finance/fee-periods', // 👈 URL list Đợt thu
-                    name: 'feePeriodList',
-                    component: () => import('@/views/school/FeePeriodList.vue')
-                },
+         
                 {
                     path: 'school/finance/fee',
                     name: 'feeManagement',
