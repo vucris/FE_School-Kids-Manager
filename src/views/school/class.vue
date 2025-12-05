@@ -2,17 +2,13 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
 import InputText from 'primevue/inputtext';
 import Dropdown from 'primevue/dropdown';
-import Button from 'primevue/button';
-import Menu from 'primevue/menu';
-import Paginator from 'primevue/paginator';
 import Dialog from 'primevue/dialog';
-import ConfirmDialog from 'primevue/confirmdialog';
-import { useConfirm } from 'primevue/useconfirm';
-import { useToast } from 'primevue/usetoast';
+import Paginator from 'primevue/paginator';
+import InputNumber from 'primevue/inputnumber';
+
+import Swal from 'sweetalert2';
 
 import {
     fetchClasses,
@@ -21,96 +17,63 @@ import {
     updateClass,
     deleteClass,
     fetchClassById,
-    updateStudentCount // 💡 thêm hàm mới
+    updateStudentCount
 } from '@/service/classService.js';
 import { fetchTeachersLite } from '@/service/teacherService.js';
 
-const toast = useToast();
-const confirm = useConfirm();
+/* =================== Toast =================== */
+const swalToast = Swal.mixin({
+    toast: true,
+    position: 'top-end',
+    showConfirmButton: false,
+    timer: 2500,
+    timerProgressBar: true
+});
 
-/* =================== FILTER TOP & HEADER =================== */
-const years = ref([
+function confirmDialog(title, text) {
+    return Swal.fire({
+        title,
+        text,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Xác nhận',
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: '#dc2626',
+        cancelButtonColor: '#6b7280',
+        reverseButtons: true
+    });
+}
+
+/* =================== FILTERS =================== */
+const years = [
     { label: 'Tất cả năm học', value: '' },
     { label: '2025 - 2026', value: '2025-2026' },
     { label: '2024 - 2025', value: '2024-2025' },
     { label: '2023 - 2024', value: '2023-2024' }
-]);
-const selectedYear = ref(years.value[0]);
+];
+const selectedYear = ref(years[0]);
 
-/* Header filters */
-const fName = ref('');
-const fRoom = ref('');
-const fGrade = ref('');
+const keyword = ref('');
+const gradeFilter = ref('');
 
-/* =================== BẢNG LỚP =================== */
+/* =================== DATA =================== */
 const loading = ref(false);
-const rows = ref([]); // dữ liệu đang hiển thị theo trang
+const rows = ref([]);
+const allClasses = ref([]);
 const totalRecords = ref(0);
 const page = ref(1);
 const size = ref(10);
-const sortField = ref('');
+const sortField = ref('className');
 const sortOrder = ref(1);
 
-/* Danh sách full tất cả lớp để check trùng GV, tên lớp, phòng học */
-const allClasses = ref([]);
+const teacherOptions = ref([]);
 
-/* =================== ROW MENU =================== */
-const rowMenu = ref();
-const activeRow = ref(null);
-const rowMenuItems = ref([
-    {
-        label: 'Xem chi tiết lớp',
-        icon: 'fa-regular fa-eye',
-        tone: 'primary',
-        sub: 'Thông tin chi tiết',
-        command: () => onAction('view')
-    },
-    {
-        label: 'Chỉnh sửa thông tin',
-        icon: 'fa-regular fa-pen-to-square',
-        tone: 'info',
-        sub: 'Tên lớp, phòng, năm học...',
-        command: () => onAction('edit')
-    },
-    {
-        label: 'Cập nhật số học sinh',
-        icon: 'fa-solid fa-children',
-        tone: 'info',
-        sub: 'Cập nhật sĩ số hiện tại',
-        command: () => onAction('updateStudentCount')
-    },
-    { separator: true },
-    {
-        label: 'Xoá lớp học',
-        icon: 'fa-regular fa-trash-can',
-        tone: 'danger',
-        sub: 'Không thể hoàn tác',
-        command: () => onAction('delete')
-    }
-]);
-
-function openRowMenu(e, row) {
-    activeRow.value = row;
-    rowMenu.value.toggle(e);
-}
-
-/* =================== DIALOG STATE =================== */
+/* =================== DIALOGS =================== */
 const showCreate = ref(false);
 const showEdit = ref(false);
 const showView = ref(false);
+const showUpdateCount = ref(false);
 
-/* 💡 Dialog cập nhật số học sinh */
-const showUpdateStudentCount = ref(false);
-const studentCountForm = ref({
-    id: null,
-    className: '',
-    currentStudentCount: 0
-});
-
-/* Giáo viên cho dropdown */
-const teacherOptions = ref([]);
-
-/* Form tạo / sửa / xem */
 const createForm = ref({
     className: '',
     grade: '',
@@ -118,6 +81,7 @@ const createForm = ref({
     academicYear: '',
     teacherId: null
 });
+
 const editForm = ref({
     id: null,
     className: '',
@@ -126,128 +90,155 @@ const editForm = ref({
     academicYear: '',
     teacherId: null
 });
+
 const viewData = ref(null);
 
-const totalClasses = computed(() => totalRecords.value);
+const countForm = ref({
+    id: null,
+    className: '',
+    currentCount: 0
+});
 
-/* =================== CẤU HÌNH KHỐI + TÊN LỚP + PHÒNG =================== */
-/* Khối lớp (chuẩn mầm non) */
+const saving = ref(false);
+
+/* =================== CONFIG =================== */
 const gradeOptions = [
-    { label: 'Nhà trẻ', value: 'Nhà trẻ' },
-    { label: 'Mầm', value: 'Mầm' },
-    { label: 'Chồi', value: 'Chồi' },
-    { label: 'Lá', value: 'Lá' }
+    { label: 'Nhà trẻ', value: 'Nhà trẻ', icon: 'fa-baby', color: 'pink' },
+    { label: 'Mầm', value: 'Mầm', icon: 'fa-seedling', color: 'green' },
+    { label: 'Chồi', value: 'Chồi', icon: 'fa-leaf', color: 'teal' },
+    { label: 'Lá', value: 'Lá', icon: 'fa-tree', color: 'emerald' }
 ];
 
-/* Tên lớp gợi ý theo từng khối */
-const baseClassNameOptions = {
-    'Nhà trẻ': ['Nhà trẻ 1', 'Nhà trẻ 2'],
+const gradeColors = {
+    'Nhà trẻ': { bg: 'bg-pink-50', text: 'text-pink-600', border: 'border-pink-200' },
+    Mầm: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-200' },
+    Chồi: { bg: 'bg-teal-50', text: 'text-teal-600', border: 'border-teal-200' },
+    Lá: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-200' }
+};
+
+const classNameOptions = {
+    'Nhà trẻ': ['Nhà trẻ 1', 'Nhà trẻ 2', 'Nhà trẻ 3'],
     Mầm: ['Mầm 1', 'Mầm 2', 'Mầm 3'],
-    Chồi: ['Chồi 1', 'Chồi 2'],
-    Lá: ['Lá 1', 'Lá 2']
+    Chồi: ['Chồi 1', 'Chồi 2', 'Chồi 3'],
+    Lá: ['Lá 1', 'Lá 2', 'Lá 3']
 };
 
-/* Phòng học gợi ý theo từng khối */
-const baseRoomOptions = {
-    'Nhà trẻ': ['P.NT01', 'P.NT02'],
+const roomOptions = {
+    'Nhà trẻ': ['P.NT01', 'P.NT02', 'P.NT03'],
     Mầm: ['P.M01', 'P.M02', 'P.M03'],
-    Chồi: ['P.C01', 'P.C02'],
-    Lá: ['P.L01', 'P.L02']
+    Chồi: ['P.C01', 'P.C02', 'P.C03'],
+    Lá: ['P.L01', 'P.L02', 'P.L03']
 };
 
-/* =================== TÍNH CÁC GIÁ TRỊ ĐÃ DÙNG =================== */
-const usedClassNames = computed(() => {
-    const s = new Set();
-    allClasses.value.forEach((c) => {
-        if (c.className) s.add(c.className);
-    });
-    return s;
-});
+/* ===== Sĩ số: mỗi lớp tối đa 20 học sinh ===== */
+const DEFAULT_CAPACITY = 20;
 
-const usedRooms = computed(() => {
-    const s = new Set();
-    allClasses.value.forEach((c) => {
-        if (c.roomNumber) s.add(c.roomNumber);
-    });
-    return s;
-});
+/* =================== COMPUTED =================== */
+const usedClassNames = computed(
+    () => new Set(allClasses.value.map((c) => c.className).filter(Boolean))
+);
+const usedRooms = computed(
+    () => new Set(allClasses.value.map((c) => c.roomNumber).filter(Boolean))
+);
+const usedTeachers = computed(
+    () =>
+        new Set(
+            allClasses.value
+                .filter((c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên')
+                .map((c) => c.teacherName)
+        )
+);
 
-const usedTeacherNames = computed(() => {
-    const s = new Set();
-    allClasses.value.forEach((c) => {
-        if (c.teacherName && c.teacherName !== 'Chưa có giáo viên') {
-            s.add(c.teacherName);
-        }
-    });
-    return s;
-});
-
-/* Options TÊN LỚP cho modal Tạo lớp */
-const classNameOptions = computed(() => {
+const availableClassNames = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
-    const base = baseClassNameOptions[grade] || [];
-    return base.filter((name) => !usedClassNames.value.has(name)).map((name) => ({ label: name, value: name }));
+    return (classNameOptions[grade] || [])
+        .filter((name) => !usedClassNames.value.has(name))
+        .map((name) => ({ label: name, value: name }));
 });
 
-/* Options PHÒNG HỌC cho modal Tạo lớp */
-const roomOptions = computed(() => {
+const availableRooms = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
-    const base = baseRoomOptions[grade] || [];
-    return base.filter((room) => !usedRooms.value.has(room)).map((room) => ({ label: room, value: room }));
+    return (roomOptions[grade] || [])
+        .filter((room) => !usedRooms.value.has(room))
+        .map((room) => ({ label: room, value: room }));
 });
 
-/* Options giáo viên cho modal TẠO lớp */
-const teacherOptionsForCreate = computed(() => {
-    if (!teacherOptions.value?.length) return [];
-    return teacherOptions.value.filter((t) => !usedTeacherNames.value.has(t.label));
+const availableTeachersForCreate = computed(() =>
+    teacherOptions.value.filter((t) => !usedTeachers.value.has(t.label))
+);
+
+const availableTeachersForEdit = computed(() => {
+    const currentClass = allClasses.value.find((c) => c.id === editForm.value.id);
+    const currentTeacher = currentClass?.teacherName;
+    return teacherOptions.value.filter(
+        (t) => !usedTeachers.value.has(t.label) || t.label === currentTeacher
+    );
 });
 
-/* Options giáo viên cho modal SỬA lớp */
-const teacherOptionsForEdit = computed(() => {
-    if (!teacherOptions.value?.length) return [];
-    if (!editForm.value.id) {
-        return teacherOptionsForCreate.value;
+const filteredRows = computed(() => {
+    let list = [...rows.value];
+
+    if (gradeFilter.value) {
+        list = list.filter((r) => r.grade === gradeFilter.value);
     }
-    const usedExceptCurrent = new Set();
-    allClasses.value.forEach((c) => {
-        if (!c.teacherName || c.teacherName === 'Chưa có giáo viên') return;
-        if (c.id === editForm.value.id) return;
-        usedExceptCurrent.add(c.teacherName);
-    });
-    return teacherOptions.value.filter((t) => !usedExceptCurrent.has(t.label));
+
+    const kw = keyword.value.trim().toLowerCase();
+    if (kw) {
+        list = list.filter(
+            (r) =>
+                (r.className || '').toLowerCase().includes(kw) ||
+                (r.teacherName || '').toLowerCase().includes(kw) ||
+                (r.roomNumber || '').toLowerCase().includes(kw)
+        );
+    }
+
+    return list;
 });
 
-/* =================== LOAD DATA =================== */
+const stats = computed(() => ({
+    total: allClasses.value.length,
+    byGrade: gradeOptions.reduce((acc, g) => {
+        acc[g.value] = allClasses.value.filter((c) => c.grade === g.value).length;
+        return acc;
+    }, {}),
+    totalStudents: allClasses.value.reduce(
+        (sum, c) => sum + (c.studentCurrent || 0),
+        0
+    ),
+    withTeacher: allClasses.value.filter(
+        (c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên'
+    ).length
+}));
+
+/* =================== LOAD =================== */
 async function loadTeachers() {
-    teacherOptions.value = await fetchTeachersLite();
+    try {
+        teacherOptions.value = await fetchTeachersLite();
+    } catch (e) {
+        console.warn('Load teachers failed:', e);
+    }
 }
 
-/* Lấy full danh sách lớp để check trùng */
-async function reloadAllClasses() {
+async function loadAllClasses() {
     try {
-        const { items } = await fetchClasses({
-            page: 1,
-            size: 100000
-        });
+        const { items } = await fetchClasses({ page: 1, size: 100000 });
         allClasses.value = items;
     } catch (e) {
-        console.warn('[Classes] Không tải được full danh sách lớp:', e?.message || e);
+        console.warn('Load all classes failed:', e);
     }
 }
 
-/* Load danh sách lớp theo filter + phân trang */
 async function load() {
     loading.value = true;
     try {
-        const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
+        const sort = sortField.value
+            ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}`
+            : undefined;
 
         const { items, total } = await fetchClasses({
             year: selectedYear.value?.value || undefined,
-            className: fName.value || undefined,
-            roomNumber: fRoom.value || undefined,
-            grade: fGrade.value || undefined,
             page: page.value,
             size: size.value,
             sort
@@ -255,775 +246,1279 @@ async function load() {
         rows.value = items;
         totalRecords.value = total;
     } catch (e) {
-        toast.add({
-            severity: 'error',
-            summary: 'Lỗi',
-            detail: e.message || 'Không tải được danh sách lớp',
-            life: 3000
+        swalToast.fire({
+            icon: 'error',
+            title: e.message || 'Không tải được danh sách lớp'
         });
     } finally {
         loading.value = false;
     }
 }
 
-/* Sort & paging */
-function onSort(field) {
-    if (sortField.value === field) {
-        sortOrder.value = sortOrder.value === 1 ? -1 : 1;
-    } else {
-        sortField.value = field;
-        sortOrder.value = 1;
-    }
-    page.value = 1;
-    load();
-}
-function onChangePage(e) {
+function onPageChange(e) {
     page.value = e.page + 1;
     size.value = e.rows;
     load();
 }
 
-/* Export Excel */
-async function onExport() {
-    await exportClassesExcel();
-}
-
 /* =================== ACTIONS =================== */
-async function onAction(type) {
-    const row = activeRow.value;
-    if (!row) return;
-
-    if (type === 'view') {
-        try {
-            const c = await fetchClassById(row.id);
-            viewData.value = c;
-            showView.value = true;
-        } catch (e) {
-            toast.add({
-                severity: 'error',
-                summary: 'Lỗi',
-                detail: e.message || 'Không lấy được thông tin lớp',
-                life: 3000
-            });
-        }
-    } else if (type === 'edit') {
-        try {
-            const c = await fetchClassById(row.id);
-            let teacherId = null;
-            if (c.teacherName && c.teacherName !== 'Chưa có giáo viên') {
-                const opt = teacherOptions.value.find((t) => t.label === c.teacherName);
-                teacherId = opt ? opt.value : null;
-            }
-
-            editForm.value = {
-                id: c.id,
-                className: c.className,
-                grade: c.grade,
-                roomNumber: c.roomNumber,
-                academicYear: c.academicYear,
-                teacherId
-            };
-            showEdit.value = true;
-        } catch (e) {
-            toast.add({
-                severity: 'error',
-                summary: 'Lỗi',
-                detail: e.message || 'Không lấy được thông tin lớp',
-                life: 3000
-            });
-        }
-    } else if (type === 'updateStudentCount') {
-        // 💡 Mở dialog cập nhật số HS
-        studentCountForm.value = {
-            id: row.id,
-            className: row.className,
-            currentStudentCount: row.studentCurrent ?? 0
-        };
-        showUpdateStudentCount.value = true;
-    } else if (type === 'delete') {
-        confirmDelete(row);
-    }
-}
-
-/* Confirm delete */
-function confirmDelete(row) {
-    confirm.require({
-        message: `Bạn có chắc chắn muốn xoá lớp "${row.className}"?`,
-        header: 'Xác nhận xoá',
-        icon: 'pi pi-exclamation-triangle',
-        acceptClass: 'p-button-danger',
-        acceptLabel: 'Xoá',
-        rejectLabel: 'Huỷ',
-        accept: async () => {
-            try {
-                await deleteClass(row.id);
-                toast.add({
-                    severity: 'success',
-                    summary: 'Thành công',
-                    detail: 'Đã xoá lớp học',
-                    life: 2500
-                });
-                await Promise.all([load(), reloadAllClasses()]);
-            } catch (e) {
-                toast.add({
-                    severity: 'error',
-                    summary: 'Lỗi',
-                    detail: e.message || 'Không xoá được lớp',
-                    life: 3000
-                });
-            }
-        }
-    });
-}
-
-/* =================== SAVE CREATE / EDIT =================== */
-async function saveCreate() {
-    if (!createForm.value.grade || !createForm.value.className || !createForm.value.roomNumber) {
-        toast.add({
-            severity: 'warn',
-            summary: 'Thiếu thông tin',
-            detail: 'Vui lòng chọn khối lớp, tên lớp và phòng học',
-            life: 2500
-        });
-        return;
-    }
-
-    if (usedClassNames.value.has(createForm.value.className)) {
-        toast.add({
-            severity: 'warn',
-            summary: 'Tên lớp đã tồn tại',
-            detail: `Lớp "${createForm.value.className}" đã tồn tại, vui lòng chọn tên khác`,
-            life: 3000
-        });
-        return;
-    }
-
-    if (createForm.value.teacherId) {
-        const opt = teacherOptions.value.find((t) => t.value === createForm.value.teacherId);
-        const teacherName = opt?.label;
-        if (teacherName && usedTeacherNames.value.has(teacherName)) {
-            toast.add({
-                severity: 'warn',
-                summary: 'Giáo viên đã được phân lớp',
-                detail: `Giáo viên "${teacherName}" đã là GVCN của một lớp khác.`,
-                life: 3000
-            });
-            return;
-        }
-    }
-
-    try {
-        await createClass(createForm.value);
-        toast.add({
-            severity: 'success',
-            summary: 'Thành công',
-            detail: 'Đã tạo lớp học',
-            life: 2500
-        });
-        showCreate.value = false;
-        resetCreateForm();
-        await Promise.all([load(), reloadAllClasses()]);
-    } catch (e) {
-        toast.add({
-            severity: 'error',
-            summary: 'Lỗi',
-            detail: e.message || 'Không tạo được lớp',
-            life: 3000
-        });
-    }
-}
-
-async function saveEdit() {
-    if (!editForm.value.id) return;
-
-    const nameClash = allClasses.value.some((c) => c.id !== editForm.value.id && c.className === editForm.value.className);
-    if (nameClash) {
-        toast.add({
-            severity: 'warn',
-            summary: 'Tên lớp đã tồn tại',
-            detail: `Lớp "${editForm.value.className}" đã tồn tại, vui lòng chọn tên khác`,
-            life: 3000
-        });
-        return;
-    }
-
-    if (editForm.value.teacherId) {
-        const opt = teacherOptions.value.find((t) => t.value === editForm.value.teacherId);
-        const teacherName = opt?.label;
-        if (teacherName) {
-            const usedExceptCurrent = new Set();
-            allClasses.value.forEach((c) => {
-                if (!c.teacherName || c.teacherName === 'Chưa có giáo viên') return;
-                if (c.id === editForm.value.id) return;
-                usedExceptCurrent.add(c.teacherName);
-            });
-
-            if (usedExceptCurrent.has(teacherName)) {
-                toast.add({
-                    severity: 'warn',
-                    summary: 'Giáo viên đã được phân lớp',
-                    detail: `Giáo viên "${teacherName}" đã là GVCN của một lớp khác.`,
-                    life: 3000
-                });
-                return;
-            }
-        }
-    }
-
-    try {
-        await updateClass(editForm.value.id, editForm.value);
-        toast.add({
-            severity: 'success',
-            summary: 'Thành công',
-            detail: 'Đã cập nhật lớp học',
-            life: 2500
-        });
-        showEdit.value = false;
-        await Promise.all([load(), reloadAllClasses()]);
-    } catch (e) {
-        toast.add({
-            severity: 'error',
-            summary: 'Lỗi',
-            detail: e.message || 'Không cập nhật được lớp',
-            life: 3000
-        });
-    }
-}
-
-/* 💡 SAVE UPDATE STUDENT COUNT */
-async function saveUpdateStudentCount() {
-    const id = studentCountForm.value.id;
-    const count = Number(studentCountForm.value.currentStudentCount);
-
-    if (!id) return;
-
-    if (!Number.isInteger(count) || count < 0) {
-        toast.add({
-            severity: 'warn',
-            summary: 'Giá trị không hợp lệ',
-            detail: 'Số học sinh phải là số nguyên không âm',
-            life: 2500
-        });
-        return;
-    }
-
-    try {
-        await updateStudentCount(id, count);
-        toast.add({
-            severity: 'success',
-            summary: 'Thành công',
-            detail: 'Đã cập nhật số học sinh trong lớp',
-            life: 2500
-        });
-        showUpdateStudentCount.value = false;
-        await Promise.all([load(), reloadAllClasses()]);
-    } catch (e) {
-        toast.add({
-            severity: 'error',
-            summary: 'Lỗi',
-            detail: e.message || 'Không cập nhật được số học sinh',
-            life: 3000
-        });
-    }
-}
-
-/* =================== HELPERS =================== */
-function resetCreateForm() {
+function openCreate() {
     createForm.value = {
         className: '',
         grade: '',
         roomNumber: '',
-        academicYear: selectedYear.value?.value || '',
+        academicYear: selectedYear.value?.value || '2024-2025',
         teacherId: null
+    };
+    showCreate.value = true;
+}
+
+async function saveCreate() {
+    if (!createForm.value.grade || !createForm.value.className || !createForm.value.roomNumber) {
+        swalToast.fire({
+            icon: 'warning',
+            title: 'Vui lòng điền đầy đủ thông tin bắt buộc'
+        });
+        return;
+    }
+
+    saving.value = true;
+    try {
+        await createClass(createForm.value);
+        swalToast.fire({ icon: 'success', title: 'Tạo lớp học thành công' });
+        showCreate.value = false;
+        await Promise.all([load(), loadAllClasses()]);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e.message || 'Tạo lớp thất bại' });
+    } finally {
+        saving.value = false;
+    }
+}
+
+async function openEdit(row) {
+    try {
+        const c = await fetchClassById(row.id);
+        const teacher = teacherOptions.value.find((t) => t.label === c.teacherName);
+        editForm.value = {
+            id: c.id,
+            className: c.className,
+            grade: c.grade,
+            roomNumber: c.roomNumber,
+            academicYear: c.academicYear,
+            teacherId: teacher?.value || null
+        };
+        showEdit.value = true;
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: 'Không lấy được thông tin lớp' });
+    }
+}
+
+async function saveEdit() {
+    if (!editForm.value.className) {
+        swalToast.fire({
+            icon: 'warning',
+            title: 'Tên lớp không được để trống'
+        });
+        return;
+    }
+
+    saving.value = true;
+    try {
+        await updateClass(editForm.value.id, editForm.value);
+        swalToast.fire({ icon: 'success', title: 'Cập nhật lớp học thành công' });
+        showEdit.value = false;
+        await Promise.all([load(), loadAllClasses()]);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e.message || 'Cập nhật thất bại' });
+    } finally {
+        saving.value = false;
+    }
+}
+
+async function openView(row) {
+    try {
+        viewData.value = await fetchClassById(row.id);
+        showView.value = true;
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: 'Không lấy được thông tin lớp' });
+    }
+}
+
+function openUpdateCount(row) {
+    countForm.value = {
+        id: row.id,
+        className: row.className,
+        currentCount: row.studentCurrent || 0
+    };
+    showUpdateCount.value = true;
+}
+
+async function saveUpdateCount() {
+    const count = Number(countForm.value.currentCount);
+    if (!Number.isInteger(count) || count < 0) {
+        swalToast.fire({
+            icon: 'warning',
+            title: 'Số học sinh phải là số nguyên không âm'
+        });
+        return;
+    }
+
+    saving.value = true;
+    try {
+        await updateStudentCount(countForm.value.id, count);
+        swalToast.fire({ icon: 'success', title: 'Cập nhật sĩ số thành công' });
+        showUpdateCount.value = false;
+        await Promise.all([load(), loadAllClasses()]);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e.message || 'Cập nhật thất bại' });
+    } finally {
+        saving.value = false;
+    }
+}
+
+async function onDelete(row) {
+    const { isConfirmed } = await confirmDialog(
+        'Xóa lớp học?',
+        `Bạn có chắc muốn xóa lớp "${row.className}"? Hành động này không thể hoàn tác.`
+    );
+    if (!isConfirmed) return;
+
+    try {
+        await deleteClass(row.id);
+        swalToast.fire({ icon: 'success', title: 'Đã xóa lớp học' });
+        await Promise.all([load(), loadAllClasses()]);
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e.message || 'Xóa lớp thất bại' });
+    }
+}
+
+async function onExport() {
+    try {
+        await exportClassesExcel();
+        swalToast.fire({ icon: 'success', title: 'Đã xuất file Excel' });
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: 'Xuất file thất bại' });
+    }
+}
+
+/* =================== UTILS =================== */
+function getGradeStyle(grade) {
+    return gradeColors[grade] || {
+        bg: 'bg-gray-50',
+        text: 'text-gray-600',
+        border: 'border-gray-200'
     };
 }
 
-/* debounce filters */
-let t;
-function debounce(fn, ms = 250) {
-    clearTimeout(t);
-    t = setTimeout(fn, ms);
+function getCapacityPercent(current, capacity) {
+    const cap = capacity || DEFAULT_CAPACITY;
+    if (!cap) return 0;
+    return Math.min(100, Math.round((current / cap) * 100));
 }
-watch([fName, fRoom, fGrade, selectedYear], () =>
-    debounce(() => {
+
+/* =================== WATCH =================== */
+let debounceTimer;
+watch([keyword, gradeFilter, selectedYear], () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
         page.value = 1;
         load();
-    }, 300)
-);
+    }, 300);
+});
 
+/* =================== INIT =================== */
 onMounted(async () => {
-    await Promise.all([load(), loadTeachers()]);
-    await reloadAllClasses();
+    await Promise.all([load(), loadTeachers(), loadAllClasses()]);
 });
 </script>
 
 <template>
-    <div class="space-y-4 px-4 md:px-6 lg:px-8 py-5 relative">
-        <!-- Loading overlay -->
-        <div v-if="loading" class="absolute inset-0 bg-white/70 flex items-center justify-center z-10 text-slate-500 text-sm">
-            <i class="fa-solid fa-spinner fa-spin mr-2"></i>
-            Đang tải dữ liệu lớp...
-        </div>
-
-        <ConfirmDialog />
-
+    <div class="class-page">
         <!-- Header -->
-        <div class="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h1 class="text-xl font-semibold text-slate-800">Lớp học</h1>
-                <p class="text-sm text-slate-500 mt-1">Quản lý danh sách lớp, giáo viên chủ nhiệm và phòng học trong năm học.</p>
+        <header class="page-header">
+            <div class="header-left">
+                <div class="header-icon">
+                    <i class="fa-solid fa-chalkboard-user"></i>
+                </div>
+                <div>
+                    <h1 class="page-title">Quản lý lớp học</h1>
+                    <p class="page-desc">Quản lý danh sách lớp, giáo viên chủ nhiệm và phòng học</p>
+                </div>
             </div>
-            <div class="flex items-center gap-2">
-                <Dropdown v-model="selectedYear" :options="years" optionLabel="label" placeholder="Năm học" class="w-44" />
-                <Button
-                    class="!bg-primary !border-0 !text-white"
-                    icon="fa-solid fa-plus mr-2"
-                    label="Tạo lớp"
-                    @click="
-                        () => {
-                            resetCreateForm();
-                            showCreate = true;
-                        }
-                    "
-                />
-                <Button class="!bg-emerald-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Xuất Excel" @click="onExport" />
+            <div class="header-actions">
+                <button class="btn btn-outline" @click="onExport">
+                    <i class="fa-solid fa-file-excel"></i>
+                    <span>Xuất Excel</span>
+                </button>
+                <button class="btn btn-primary" @click="openCreate">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Tạo lớp mới</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card stat-total">
+                <div class="stat-icon">
+                    <i class="fa-solid fa-school"></i>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-value">{{ stats.total }}</span>
+                    <span class="stat-label">Tổng số lớp</span>
+                </div>
+            </div>
+            <div class="stat-card stat-students">
+                <div class="stat-icon">
+                    <i class="fa-solid fa-children"></i>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-value">{{ stats.totalStudents }}</span>
+                    <span class="stat-label">Tổng học sinh</span>
+                </div>
+            </div>
+            <div class="stat-card stat-teachers">
+                <div class="stat-icon">
+                    <i class="fa-solid fa-user-tie"></i>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-value">{{ stats.withTeacher }}/{{ stats.total }}</span>
+                    <span class="stat-label">Lớp có GVCN</span>
+                </div>
+            </div>
+            <div
+                v-for="g in gradeOptions"
+                :key="g.value"
+                class="stat-card stat-grade"
+                :class="`stat-${g.color}`"
+            >
+                <div class="stat-icon">
+                    <i :class="['fa-solid', g.icon]"></i>
+                </div>
+                <div class="stat-content">
+                    <span class="stat-value">{{ stats.byGrade[g.value] || 0 }}</span>
+                    <span class="stat-label">{{ g.label }}</span>
+                </div>
             </div>
         </div>
 
-        <!-- Small stats -->
-        <div class="flex flex-wrap gap-3">
-            <div class="stat-card">
-                <div class="stat-label">Tổng số lớp</div>
-                <div class="stat-value">
-                    {{ totalClasses }}
+        <!-- Filters -->
+        <div class="filter-bar">
+            <div class="filter-item">
+                <label>Năm học</label>
+                <Dropdown
+                    v-model="selectedYear"
+                    :options="years"
+                    optionLabel="label"
+                    placeholder="Chọn năm học"
+                    class="w-full"
+                />
+            </div>
+            <div class="filter-item">
+                <label>Khối lớp</label>
+                <Dropdown
+                    v-model="gradeFilter"
+                    :options="[{ label: 'Tất cả khối', value: '' }, ...gradeOptions]"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Chọn khối"
+                    class="w-full"
+                />
+            </div>
+            <div class="filter-item filter-search">
+                <label>Tìm kiếm</label>
+                <div class="search-box">
+                    <i class="fa-solid fa-search"></i>
+                    <InputText
+                        v-model="keyword"
+                        placeholder="Tên lớp, giáo viên, phòng..."
+                        class="w-full"
+                    />
                 </div>
             </div>
         </div>
 
         <!-- Table -->
-        <div class="rounded-xl border border-slate-200 overflow-hidden bg-white relative">
-            <DataTable :value="rows" :loading="false" dataKey="id" responsiveLayout="scroll" :rowHover="true" class="p-datatable-sm">
-                <Column header="#" :body="(_, opt) => opt.rowIndex + 1" headerStyle="width: 4rem" />
-
-                <!-- Tên lớp + mã -->
-                <Column>
-                    <template #header>
-                        <div class="header-filter nowrap">
-                            <InputText v-model="fName" class="w-full" placeholder="Tìm theo tên lớp" />
-                            <button class="sort-btn" @click="onSort('className')" title="Sắp xếp theo tên">
-                                <i class="fa-solid fa-up-down"></i>
-                            </button>
-                        </div>
-                    </template>
-                    <template #body="{ data }">
-                        <div class="class-cell">
-                            <div class="class-title" :title="data.className">
-                                {{ data.className || '-' }}
-                            </div>
-                            <div v-if="data.classCode" class="class-code" :title="data.classCode">
-                                {{ data.classCode }}
-                            </div>
-                        </div>
-                    </template>
-                </Column>
-
-                <!-- Phòng học (chỉ hiển thị, không filter) -->
-                <Column header="Phòng học" headerStyle="min-width: 120px">
-                    <template #body="{ data }">
-                        <span class="ellipsis" :title="data.roomNumber">
-                            {{ data.roomNumber || '-' }}
-                        </span>
-                    </template>
-                </Column>
-
-                <!-- Khối lớp -->
-                <Column headerStyle="min-width: 120px">
-                    <template #header>
-                        <div class="header-filter nowrap">
-                            <InputText v-model="fGrade" class="w-full" placeholder="Khối lớp" />
-                            <button class="sort-btn" @click="onSort('grade')" title="Sắp xếp theo khối">
-                                <i class="fa-solid fa-up-down"></i>
-                            </button>
-                        </div>
-                    </template>
-                    <template #body="{ data }">
-                        <span class="ellipsis" :title="data.grade">
-                            {{ data.grade || '-' }}
-                        </span>
-                    </template>
-                </Column>
-
-                <!-- Năm học -->
-                <Column header="Năm học" headerStyle="min-width: 110px">
-                    <template #body="{ data }">
-                        <span class="ellipsis" :title="data.academicYear">
-                            {{ data.academicYear || '-' }}
-                        </span>
-                    </template>
-                </Column>
-
-                <!-- Giáo viên -->
-                <Column header="Giáo viên chủ nhiệm" headerStyle="min-width: 160px">
-                    <template #body="{ data }">
-                        <span class="ellipsis" :title="data.teacherName">
-                            {{ data.teacherName || 'Chưa có giáo viên' }}
-                        </span>
-                    </template>
-                </Column>
-
-                <!-- Số HS -->
-                <Column header="Học sinh" headerStyle="width:120px">
-                    <template #body="{ data }">
-                        <span class="font-semibold">{{ data.studentCurrent }}</span>
-                        <span v-if="data.studentCapacity !== null"> /{{ data.studentCapacity }} </span>
-                    </template>
-                </Column>
-
-                <!-- Trạng thái -->
-                <Column header="Trạng thái" headerStyle="width:160px">
-                    <template #body>
-                        <span class="status-badge status--active">Đang hoạt động</span>
-                    </template>
-                </Column>
-
-                <!-- Hành động -->
-                <Column header="Hành động" headerStyle="width:64px; text-align:right;" bodyStyle="text-align:right;">
-                    <template #body="{ data }">
-                        <Button icon="fa-solid fa-ellipsis-vertical" class="!bg-transparent !border-0 !text-slate-600 hover:!bg-slate-100" @click="(e) => openRowMenu(e, data)" />
-                    </template>
-                </Column>
-            </DataTable>
-
-            <div class="border-t border-slate-200">
-                <Paginator :rows="size" :totalRecords="totalRecords" :rowsPerPageOptions="[10, 20, 50]" @page="onChangePage" />
+        <div class="table-container">
+            <div v-if="loading" class="loading-overlay">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Đang tải...</span>
             </div>
+
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px">#</th>
+                        <th style="min-width: 180px">Lớp học</th>
+                        <th style="min-width: 100px">Khối</th>
+                        <th style="min-width: 100px">Phòng</th>
+                        <th style="min-width: 120px">Năm học</th>
+                        <th style="min-width: 180px">Giáo viên chủ nhiệm</th>
+                        <th style="min-width: 140px">Sĩ số</th>
+                        <th style="min-width: 100px">Trạng thái</th>
+                        <th style="width: 140px" class="text-center">Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="(row, idx) in filteredRows" :key="row.id">
+                        <td>{{ (page - 1) * size + idx + 1 }}</td>
+                        <td>
+                            <div class="class-cell">
+                                <span class="class-name">{{ row.className }}</span>
+                                <span v-if="row.classCode" class="class-code">
+                                    {{ row.classCode }}
+                                </span>
+                            </div>
+                        </td>
+                        <td>
+                            <span
+                                class="grade-badge"
+                                :class="[
+                                    getGradeStyle(row.grade).bg,
+                                    getGradeStyle(row.grade).text
+                                ]"
+                            >
+                                {{ row.grade || '—' }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="room-text">
+                                <i class="fa-solid fa-door-open"></i>
+                                {{ row.roomNumber || '—' }}
+                            </span>
+                        </td>
+                        <td>{{ row.academicYear || '—' }}</td>
+                        <td>
+                            <div
+                                v-if="row.teacherName && row.teacherName !== 'Chưa có giáo viên'"
+                                class="teacher-cell"
+                            >
+                                <div class="teacher-avatar">
+                                    {{ row.teacherName.charAt(0) }}
+                                </div>
+                                <span>{{ row.teacherName }}</span>
+                            </div>
+                            <span v-else class="no-teacher">Chưa phân công</span>
+                        </td>
+                        <td>
+                            <div class="capacity-cell">
+                                <div class="capacity-bar">
+                                    <div
+                                        class="capacity-fill"
+                                        :style="{
+                                            width:
+                                                getCapacityPercent(
+                                                    row.studentCurrent,
+                                                    row.studentCapacity || DEFAULT_CAPACITY
+                                                ) + '%'
+                                        }"
+                                        :class="{
+                                            'fill-low':
+                                                getCapacityPercent(
+                                                    row.studentCurrent,
+                                                    row.studentCapacity || DEFAULT_CAPACITY
+                                                ) < 50,
+                                            'fill-medium':
+                                                getCapacityPercent(
+                                                    row.studentCurrent,
+                                                    row.studentCapacity || DEFAULT_CAPACITY
+                                                ) >= 50 &&
+                                                getCapacityPercent(
+                                                    row.studentCurrent,
+                                                    row.studentCapacity || DEFAULT_CAPACITY
+                                                ) < 80,
+                                            'fill-high':
+                                                getCapacityPercent(
+                                                    row.studentCurrent,
+                                                    row.studentCapacity || DEFAULT_CAPACITY
+                                                ) >= 80
+                                        }"
+                                    ></div>
+                                </div>
+                                <span class="capacity-text">
+                                    {{ row.studentCurrent || 0 }}/{{ row.studentCapacity || DEFAULT_CAPACITY }}
+                                </span>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="status-badge active">
+                                <i class="fa-solid fa-circle"></i>
+                                Hoạt động
+                            </span>
+                        </td>
+                        <td>
+                            <div class="action-buttons">
+                                <button
+                                    class="action-btn"
+                                    @click="openView(row)"
+                                    title="Xem chi tiết"
+                                >
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                                <button
+                                    class="action-btn"
+                                    @click="openEdit(row)"
+                                    title="Chỉnh sửa"
+                                >
+                                    <i class="fa-solid fa-pen"></i>
+                                </button>
+                                <button
+                                    class="action-btn"
+                                    @click="openUpdateCount(row)"
+                                    title="Cập nhật sĩ số"
+                                >
+                                    <i class="fa-solid fa-users"></i>
+                                </button>
+                                <button
+                                    class="action-btn danger"
+                                    @click="onDelete(row)"
+                                    title="Xóa"
+                                >
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr v-if="!loading && !filteredRows.length">
+                        <td colspan="9" class="empty-cell">
+                            <i class="fa-solid fa-folder-open"></i>
+                            <span>Không có dữ liệu lớp học</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
 
-        <!-- Row menu -->
-        <Menu ref="rowMenu" :model="rowMenuItems" :popup="true" appendTo="body" :pt="{ menu: { class: 'rowmenu-panel' } }">
-            <template #item="{ item, props }">
-                <div v-if="item.separator" class="rowmenu-sep"></div>
-                <button
-                    v-else
-                    type="button"
-                    v-bind="props.action"
-                    class="menu-item"
-                    :class="{
-                        'menu-item--danger': item.tone === 'danger',
-                        'menu-item--warn': item.tone === 'warn',
-                        'menu-item--info': item.tone === 'info',
-                        'menu-item--primary': item.tone === 'primary'
-                    }"
-                    @click="item.command && item.command()"
-                >
-                    <span class="menu-item__icon">
-                        <i :class="item.icon"></i>
-                    </span>
-                    <div class="flex-1 min-w-0 text-left">
-                        <div class="menu-item__label truncate">
-                            {{ item.label }}
-                        </div>
-                        <div v-if="item.sub" class="menu-item__sub truncate">
-                            {{ item.sub }}
-                        </div>
-                    </div>
-                </button>
+        <!-- Pagination -->
+        <div v-if="totalRecords > 0" class="pagination-wrapper">
+            <span class="pagination-info">
+                Hiển thị
+                {{ (page - 1) * size + 1 }}
+                -
+                {{ Math.min(page * size, totalRecords) }}
+                /
+                {{ totalRecords }}
+                lớp
+            </span>
+            <Paginator
+                :rows="size"
+                :totalRecords="totalRecords"
+                :first="(page - 1) * size"
+                @page="onPageChange"
+                :rowsPerPageOptions="[10, 20, 50]"
+            />
+        </div>
+
+        <!-- Dialog: Create -->
+        <Dialog v-model:visible="showCreate" modal :style="{ width: '520px' }" :draggable="false">
+            <template #header>
+                <div class="dialog-header">
+                    <i class="fa-solid fa-plus-circle"></i>
+                    <span>Tạo lớp học mới</span>
+                </div>
             </template>
-        </Menu>
 
-        <!-- Dialog tạo lớp -->
-        <!-- (giữ nguyên như bạn đang có, không đổi) -->
-
-        <!-- Dialog tạo lớp -->
-        <Dialog v-model:visible="showCreate" header="Tạo lớp học mới" modal :style="{ width: '520px' }">
-            <div class="space-y-3">
-                <!-- Khối lớp + Tên lớp -->
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="field-label"> Khối lớp <span class="text-red-500">*</span> </label>
-                        <Dropdown v-model="createForm.grade" :options="gradeOptions" optionLabel="label" optionValue="value" placeholder="Chọn khối lớp" class="w-full" />
+            <div class="dialog-body">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label>Khối lớp <span class="required">*</span></label>
+                        <Dropdown
+                            v-model="createForm.grade"
+                            :options="gradeOptions"
+                            optionLabel="label"
+                            optionValue="value"
+                            placeholder="Chọn khối"
+                            class="w-full"
+                            @change="
+                                () => {
+                                    createForm.className = '';
+                                    createForm.roomNumber = '';
+                                }
+                            "
+                        />
                     </div>
-                    <div>
-                        <label class="field-label"> Tên lớp <span class="text-red-500">*</span> </label>
-                        <Dropdown v-model="createForm.className" :options="classNameOptions" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn tên lớp" class="w-full" />
+                    <div class="form-field">
+                        <label>Tên lớp <span class="required">*</span></label>
+                        <Dropdown
+                            v-model="createForm.className"
+                            :options="availableClassNames"
+                            optionLabel="label"
+                            optionValue="value"
+                            :disabled="!createForm.grade"
+                            placeholder="Chọn tên lớp"
+                            class="w-full"
+                        />
                     </div>
                 </div>
 
-                <!-- Phòng học + Năm học -->
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="field-label"> Phòng học <span class="text-red-500">*</span> </label>
-                        <Dropdown v-model="createForm.roomNumber" :options="roomOptions" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn phòng học" class="w-full" />
+                <div class="form-row">
+                    <div class="form-field">
+                        <label>Phòng học <span class="required">*</span></label>
+                        <Dropdown
+                            v-model="createForm.roomNumber"
+                            :options="availableRooms"
+                            optionLabel="label"
+                            optionValue="value"
+                            :disabled="!createForm.grade"
+                            placeholder="Chọn phòng"
+                            class="w-full"
+                        />
                     </div>
-                    <div>
-                        <label class="field-label">Năm học</label>
-                        <InputText v-model="createForm.academicYear" placeholder="VD: 2025-2026" class="w-full" />
+                    <div class="form-field">
+                        <label>Năm học</label>
+                        <InputText
+                            v-model="createForm.academicYear"
+                            placeholder="VD: 2024-2025"
+                            class="w-full"
+                        />
                     </div>
                 </div>
 
-                <p class="text-xs text-slate-500">Gợi ý tên lớp và phòng học theo chuẩn trường mầm non. Những tên lớp / phòng đã dùng sẽ được ẩn khỏi danh sách.</p>
-
-                <!-- GVCN -->
-                <div>
-                    <label class="field-label">Giáo viên chủ nhiệm</label>
-                    <Dropdown v-model="createForm.teacherId" :options="teacherOptionsForCreate" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên" class="w-full" />
-                    <p class="text-xs text-slate-500 mt-1">Một giáo viên chỉ được làm GVCN của tối đa <b>1 lớp</b>.</p>
-                </div>
-
-                <div class="flex justify-end gap-2 pt-2">
-                    <Button label="Huỷ" class="p-button-text" @click="showCreate = false" />
-                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveCreate" />
+                <div class="form-field">
+                    <label>Giáo viên chủ nhiệm</label>
+                    <Dropdown
+                        v-model="createForm.teacherId"
+                        :options="availableTeachersForCreate"
+                        optionLabel="label"
+                        optionValue="value"
+                        showClear
+                        placeholder="Chọn giáo viên (không bắt buộc)"
+                        class="w-full"
+                    />
+                    <span class="field-hint">
+                        Mỗi giáo viên chỉ có thể làm GVCN của 1 lớp
+                    </span>
                 </div>
             </div>
+
+            <template #footer>
+                <div class="dialog-footer">
+                    <button class="btn btn-ghost" @click="showCreate = false">Hủy</button>
+                    <button class="btn btn-primary" @click="saveCreate" :disabled="saving">
+                        <i v-if="saving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-check"></i>
+                        <span>{{ saving ? 'Đang tạo...' : 'Tạo lớp' }}</span>
+                    </button>
+                </div>
+            </template>
         </Dialog>
 
-        <!-- Dialog sửa lớp -->
-        <Dialog v-model:visible="showEdit" header="Chỉnh sửa lớp học" modal :style="{ width: '520px' }">
-            <div v-if="editForm.id" class="space-y-3">
-                <div>
-                    <label class="field-label">Tên lớp</label>
-                    <InputText v-model="editForm.className" class="w-full" />
+        <!-- Dialog: Edit -->
+        <Dialog v-model:visible="showEdit" modal :style="{ width: '520px' }" :draggable="false">
+            <template #header>
+                <div class="dialog-header">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                    <span>Chỉnh sửa lớp học</span>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="field-label">Khối lớp</label>
+            </template>
+
+            <div class="dialog-body">
+                <div class="form-row">
+                    <div class="form-field">
+                        <label>Tên lớp <span class="required">*</span></label>
+                        <InputText v-model="editForm.className" class="w-full" />
+                    </div>
+                    <div class="form-field">
+                        <label>Khối lớp</label>
                         <InputText v-model="editForm.grade" class="w-full" />
                     </div>
-                    <div>
-                        <label class="field-label">Phòng học</label>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-field">
+                        <label>Phòng học</label>
                         <InputText v-model="editForm.roomNumber" class="w-full" />
                     </div>
-                </div>
-                <div>
-                    <label class="field-label">Năm học</label>
-                    <InputText v-model="editForm.academicYear" class="w-full" />
-                </div>
-                <div>
-                    <label class="field-label">Giáo viên chủ nhiệm</label>
-                    <Dropdown v-model="editForm.teacherId" :options="teacherOptionsForEdit" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên" class="w-full" />
-                    <p class="text-xs text-slate-500 mt-1">Không cho phép chọn giáo viên đã là GVCN lớp khác.</p>
-                </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <Button label="Huỷ" class="p-button-text" @click="showEdit = false" />
-                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveEdit" />
-                </div>
-            </div>
-        </Dialog>
-
-        <!-- Dialog xem lớp -->
-        <Dialog v-model:visible="showView" header="Thông tin lớp học" modal :style="{ width: '480px' }">
-            <div v-if="viewData" class="space-y-2">
-                <div class="mb-2">
-                    <div class="text-lg font-semibold text-slate-800">
-                        {{ viewData.className }}
+                    <div class="form-field">
+                        <label>Năm học</label>
+                        <InputText v-model="editForm.academicYear" class="w-full" />
                     </div>
-                    <div v-if="viewData.classCode" class="text-sm text-slate-500">Mã lớp: {{ viewData.classCode }}</div>
                 </div>
-                <div><span class="font-medium">Khối lớp:</span> {{ viewData.grade || '-' }}</div>
-                <div><span class="font-medium">Phòng học:</span> {{ viewData.roomNumber || '-' }}</div>
-                <div><span class="font-medium">Năm học:</span> {{ viewData.academicYear || '-' }}</div>
-                <div>
-                    <span class="font-medium">Giáo viên chủ nhiệm:</span>
-                    {{ viewData.teacherName }}
+
+                <div class="form-field">
+                    <label>Giáo viên chủ nhiệm</label>
+                    <Dropdown
+                        v-model="editForm.teacherId"
+                        :options="availableTeachersForEdit"
+                        optionLabel="label"
+                        optionValue="value"
+                        showClear
+                        placeholder="Chọn giáo viên"
+                        class="w-full"
+                    />
                 </div>
-                <div>
-                    <span class="font-medium">Số học sinh:</span>
-                    {{ viewData.studentCurrent }}
-                    <span v-if="viewData.studentCapacity !== null"> / {{ viewData.studentCapacity }} </span>
+            </div>
+
+            <template #footer>
+                <div class="dialog-footer">
+                    <button class="btn btn-ghost" @click="showEdit = false">Hủy</button>
+                    <button class="btn btn-primary" @click="saveEdit" :disabled="saving">
+                        <i v-if="saving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-save"></i>
+                        <span>{{ saving ? 'Đang lưu...' : 'Lưu thay đổi' }}</span>
+                    </button>
+                </div>
+            </template>
+        </Dialog>
+
+        <!-- Dialog: View -->
+        <Dialog v-model:visible="showView" modal :style="{ width: '480px' }" :draggable="false">
+            <template #header>
+                <div class="dialog-header">
+                    <i class="fa-solid fa-info-circle"></i>
+                    <span>Thông tin lớp học</span>
+                </div>
+            </template>
+
+            <div v-if="viewData" class="dialog-body">
+                <div class="view-header">
+                    <div class="view-icon" :class="getGradeStyle(viewData.grade).bg">
+                        <i class="fa-solid fa-chalkboard"></i>
+                    </div>
+                    <div>
+                        <h3 class="view-title">{{ viewData.className }}</h3>
+                        <span v-if="viewData.classCode" class="view-code">
+                            {{ viewData.classCode }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="view-grid">
+                    <div class="view-item">
+                        <span class="view-label">Khối lớp</span>
+                        <span class="view-value">{{ viewData.grade || '—' }}</span>
+                    </div>
+                    <div class="view-item">
+                        <span class="view-label">Phòng học</span>
+                        <span class="view-value">{{ viewData.roomNumber || '—' }}</span>
+                    </div>
+                    <div class="view-item">
+                        <span class="view-label">Năm học</span>
+                        <span class="view-value">{{ viewData.academicYear || '—' }}</span>
+                    </div>
+                    <div class="view-item">
+                        <span class="view-label">Sĩ số</span>
+                        <span class="view-value">
+                            {{ viewData.studentCurrent || 0 }}/{{ viewData.studentCapacity || DEFAULT_CAPACITY }}
+                        </span>
+                    </div>
+                    <div class="view-item full">
+                        <span class="view-label">Giáo viên chủ nhiệm</span>
+                        <span class="view-value">
+                            {{ viewData.teacherName || 'Chưa phân công' }}
+                        </span>
+                    </div>
                 </div>
             </div>
         </Dialog>
 
-        <!-- 💡 Dialog cập nhật số học sinh -->
-        <Dialog v-model:visible="showUpdateStudentCount" header="Cập nhật số học sinh" modal :style="{ width: '360px' }">
-            <div class="space-y-3">
-                <div class="text-sm text-slate-600">
-                    Lớp:
-                    <span class="font-semibold text-slate-800">
-                        {{ studentCountForm.className || '-' }}
-                    </span>
+        <!-- Dialog: Update Student Count -->
+        <Dialog
+            v-model:visible="showUpdateCount"
+            modal
+            :style="{ width: '400px' }"
+            :draggable="false"
+        >
+            <template #header>
+                <div class="dialog-header">
+                    <i class="fa-solid fa-users"></i>
+                    <span>Cập nhật sĩ số</span>
                 </div>
-                <div>
-                    <label class="field-label">Số học sinh hiện tại</label>
-                    <InputText v-model.number="studentCountForm.currentStudentCount" type="number" min="0" class="w-full" />
-                    <p class="text-xs text-slate-500 mt-1">Nhập tổng số học sinh đang học trong lớp này.</p>
+            </template>
+
+            <div class="dialog-body">
+                <div class="count-info">
+                    <span>Lớp:</span>
+                    <strong>{{ countForm.className }}</strong>
                 </div>
-                <div class="flex justify-end gap-2 pt-2">
-                    <Button label="Huỷ" class="p-button-text" @click="showUpdateStudentCount = false" />
-                    <Button label="Lưu" class="!bg-primary !border-0 !text-white" @click="saveUpdateStudentCount" />
+
+                <div class="form-field">
+                    <label>Số học sinh hiện tại <span class="required">*</span></label>
+                    <InputNumber v-model="countForm.currentCount" :min="0" class="w-full" />
+                    <span class="field-hint">Nhập tổng số học sinh đang học trong lớp (tối đa 20)</span>
                 </div>
             </div>
+
+            <template #footer>
+                <div class="dialog-footer">
+                    <button class="btn btn-ghost" @click="showUpdateCount = false">Hủy</button>
+                    <button class="btn btn-primary" @click="saveUpdateCount" :disabled="saving">
+                        <i v-if="saving" class="fa-solid fa-spinner fa-spin"></i>
+                        <i v-else class="fa-solid fa-check"></i>
+                        <span>{{ saving ? 'Đang lưu...' : 'Cập nhật' }}</span>
+                    </button>
+                </div>
+            </template>
         </Dialog>
     </div>
 </template>
 
 <style scoped>
-/* Stats nhỏ */
-.stat-card {
-    padding: 10px 14px;
-    border-radius: 12px;
+/* ===== Base ===== */
+.class-page {
+    padding: 1.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
     background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    min-width: 140px;
-}
-.stat-label {
-    font-size: 12px;
-    color: #64748b;
-}
-.stat-value {
-    font-size: 18px;
-    font-weight: 700;
-    color: #0f172a;
+    min-height: 100vh;
 }
 
-/* Header filter */
-.header-filter {
+/* ===== Header ===== */
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.header-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 0.75rem;
 }
 
-/* Class name cell */
-.class-cell {
-    display: block;
-    line-height: 1.25;
-}
-.class-title {
-    font-weight: 600;
-    color: #075985;
-    white-space: normal !important;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-}
-.class-code {
-    font-size: 12px;
-    color: #64748b;
-    margin-top: 2px;
-}
-
-/* Sort button */
-.sort-btn {
-    display: inline-flex;
+.header-icon {
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border-radius: 12px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
+    color: white;
+    font-size: 1.25rem;
+}
+
+.page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0;
+}
+
+.page-desc {
+    font-size: 0.875rem;
     color: #64748b;
-    background: #f8fafc;
+    margin: 0;
+}
+
+.header-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* ===== Buttons ===== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.btn-primary {
+    background: #6366f1;
+    color: white;
+}
+.btn-primary:hover {
+    background: #4f46e5;
+}
+
+.btn-outline {
+    background: white;
+    color: #475569;
     border: 1px solid #e2e8f0;
 }
-.sort-btn:hover {
+.btn-outline:hover {
+    background: #f8fafc;
+}
+
+.btn-ghost {
+    background: transparent;
+    color: #64748b;
+}
+.btn-ghost:hover {
     background: #f1f5f9;
 }
 
-/* Text ellipsis */
-.ellipsis {
-    display: inline-block;
-    max-width: 100%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
-/* Status badge */
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    height: 28px;
-    padding: 0 10px;
-    border-radius: 9999px;
-    font-weight: 600;
-    font-size: 13px;
-    border: 1px solid transparent;
-}
-.status--active {
-    background: #e6f0ff;
-    color: #1d4ed8;
-    border-color: #bfdbfe;
+/* ===== Stats ===== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
 }
 
-/* Row menu panel */
-:deep(.rowmenu-panel) {
-    padding: 6px;
-    background: #fff;
+.stat-card {
+    background: white;
     border-radius: 12px;
-    border: 1px solid #e5e7eb;
-    box-shadow:
-        0 10px 15px -3px rgba(15, 23, 42, 0.15),
-        0 4px 6px -4px rgba(15, 23, 42, 0.1);
-    min-width: 240px;
-}
-.rowmenu-sep {
-    height: 1px;
-    background: #e5e7eb;
-    margin: 6px 4px;
-}
-
-.menu-item {
-    width: 100%;
+    padding: 1rem;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    border-radius: 10px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-}
-.menu-item:hover {
-    background: #f8fafc;
+    gap: 0.75rem;
+    border: 1px solid #e2e8f0;
 }
 
-.menu-item__icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 9999px;
-    display: inline-flex;
+.stat-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    background: #e5e7eb;
-    color: #0f172a;
-    flex-shrink: 0;
-}
-.menu-item--primary .menu-item__icon {
-    background: #eff6ff;
-    color: #2563eb;
-}
-.menu-item--info .menu-item__icon {
-    background: #ecfeff;
-    color: #0ea5e9;
-}
-.menu-item--warn .menu-item__icon {
-    background: #fffbeb;
-    color: #f59e0b;
-}
-.menu-item--danger .menu-item__icon {
-    background: #fef2f2;
-    color: #dc2626;
+    font-size: 1rem;
 }
 
-.menu-item__label {
-    font-size: 14px;
-    font-weight: 600;
-    color: #0f172a;
+.stat-total .stat-icon {
+    background: #eff6ff;
+    color: #3b82f6;
 }
-.menu-item__sub {
-    font-size: 12px;
+.stat-students .stat-icon {
+    background: #fef3c7;
+    color: #f59e0b;
+}
+.stat-teachers .stat-icon {
+    background: #f0fdf4;
+    color: #22c55e;
+}
+.stat-pink .stat-icon {
+    background: #fce7f3;
+    color: #ec4899;
+}
+.stat-green .stat-icon {
+    background: #dcfce7;
+    color: #22c55e;
+}
+.stat-teal .stat-icon {
+    background: #ccfbf1;
+    color: #14b8a6;
+}
+.stat-emerald .stat-icon {
+    background: #d1fae5;
+    color: #10b981;
+}
+
+.stat-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.stat-label {
+    font-size: 0.75rem;
     color: #64748b;
 }
 
-/* Field label */
-.field-label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: #4b5563;
-    margin-bottom: 4px;
+/* ===== Filter ===== */
+.filter-bar {
+    display: grid;
+    grid-template-columns: 180px 150px 1fr;
+    gap: 1rem;
+    padding: 1rem;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    margin-bottom: 1rem;
 }
 
-/* Fix header nowrap */
-:deep(.p-datatable .p-datatable-thead > tr > th) {
+@media (max-width: 768px) {
+    .filter-bar {
+        grid-template-columns: 1fr;
+    }
+}
+
+.filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.filter-item label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+}
+
+.search-box {
+    position: relative;
+}
+
+.search-box i {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+}
+
+.search-box input {
+    padding-left: 2.25rem !important;
+}
+
+/* ===== Table ===== */
+.table-container {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    position: relative;
+}
+
+.loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: #64748b;
+    z-index: 10;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: #475569;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
     white-space: nowrap;
+}
+
+.data-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f1f5f9;
+    color: #334155;
+}
+
+.data-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+/* Class cell */
+.class-cell {
+    display: flex;
+    flex-direction: column;
+}
+
+.class-name {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.class-code {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+/* Grade badge */
+.grade-badge {
+    display: inline-flex;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Room */
+.room-text {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: #64748b;
+}
+
+.room-text i {
+    font-size: 0.75rem;
+}
+
+/* Teacher */
+.teacher-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.teacher-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #a5b4fc, #818cf8);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.no-teacher {
+    color: #94a3b8;
+    font-style: italic;
+}
+
+/* Capacity */
+.capacity-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.capacity-bar {
+    width: 80px;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.capacity-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.fill-low {
+    background: #22c55e;
+}
+.fill-medium {
+    background: #f59e0b;
+}
+.fill-high {
+    background: #ef4444;
+}
+
+.capacity-text {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+/* Status */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-badge.active {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+.status-badge i {
+    font-size: 0.5rem;
+}
+
+/* Actions */
+.action-buttons {
+    display: flex;
+    gap: 0.25rem;
+    justify-content: center;
+}
+
+.action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: #f1f5f9;
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.action-btn:hover {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.action-btn.danger {
+    color: #ef4444;
+}
+.action-btn.danger:hover {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+/* Empty */
+.empty-cell {
+    text-align: center;
+    padding: 3rem !important;
+    color: #94a3b8;
+}
+
+.empty-cell i {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+/* ===== Pagination ===== */
+.pagination-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.pagination-info {
+    font-size: 0.875rem;
+    color: #64748b;
+}
+
+/* ===== Dialog ===== */
+.dialog-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.form-field label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #475569;
+}
+
+.required {
+    color: #ef4444;
+}
+
+.field-hint {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+/* View dialog */
+.view-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.view-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    color: #6366f1;
+}
+
+.view-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 0;
+}
+
+.view-code {
+    font-size: 0.875rem;
+    color: #64748b;
+}
+
+.view-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.view-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.view-item.full {
+    grid-column: span 2;
+}
+
+.view-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #94a3b8;
+    text-transform: uppercase;
+}
+
+.view-value {
+    font-size: 0.875rem;
+    color: #1e293b;
+}
+
+/* Count dialog */
+.count-info {
+    padding: 0.75rem;
+    background: #f8fafc;
+    border-radius: 8px;
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.875rem;
 }
 </style>

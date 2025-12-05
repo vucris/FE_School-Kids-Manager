@@ -5,44 +5,30 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
 import Calendar from 'primevue/calendar';
-import Button from 'primevue/button';
-import Tag from 'primevue/tag';
+// import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
-import Card from 'primevue/card';
 
 import Swal from 'sweetalert2';
 
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser, getCurrentUsername, fetchCurrentUsername } from '@/service/authService.js';
-
-// ✅ Lấy lớp theo giáo viên đăng nhập
 import { fetchMyTeacherClasses } from '@/service/teacherService.js';
-
-// ✅ SERVICE LEAVE REQUEST (đã gắn token trong http.js)
 import { fetchPendingLeaveRequestsByClass, approveLeaveRequest, rejectLeaveRequest } from '@/service/leaveRequestService.js';
 
-/**
- * Status cho đơn xin nghỉ (theo enum LeaveRequestStatus)
- * PENDING: đang chờ duyệt
- * APPROVED: đã duyệt
- * REJECTED: từ chối
- * CANCELLED: phụ huynh tự hủy
- */
 const STATUS = {
-    PENDING: { key: 'PENDING', label: 'Đang chờ duyệt', color: 'warning' },
-    APPROVED: { key: 'APPROVED', label: 'Đã duyệt', color: 'success' },
-    REJECTED: { key: 'REJECTED', label: 'Từ chối', color: 'danger' },
-    CANCELLED: { key: 'CANCELLED', label: 'Đã hủy', color: 'secondary' }
+    PENDING: { key: 'PENDING', label: 'Chờ duyệt', class: 'status-pending' },
+    APPROVED: { key: 'APPROVED', label: 'Đã duyệt', class: 'status-approved' },
+    REJECTED: { key: 'REJECTED', label: 'Từ chối', class: 'status-rejected' },
+    CANCELLED: { key: 'CANCELLED', label: 'Đã hủy', class: 'status-cancelled' }
 };
 
 const statusOptions = [
-    { label: 'Tất cả', value: 'ALL' },
-    { label: STATUS.PENDING.label, value: STATUS.PENDING.key }
+    { label: 'Tất cả trạng thái', value: 'ALL' },
+    { label: 'Chờ duyệt', value: 'PENDING' }
 ];
 
 const auth = useAuthStore();
 
-/* Lấy username người xử lý để gửi cho backend (teacherName) */
 const currentUser = ref('system');
 async function ensureUsername() {
     try {
@@ -51,49 +37,40 @@ async function ensureUsername() {
             currentUser.value = fromStore;
             return;
         }
-
         const fromLocal = getCurrentUsername();
         if (fromLocal) {
             currentUser.value = fromLocal;
             return;
         }
-
         const fromApi = await fetchCurrentUsername();
         currentUser.value = fromApi || 'system';
     } catch {
         currentUser.value = 'system';
     }
 }
+
 watch(
     () => auth.user,
-    () => {
-        ensureUsername();
-    },
+    () => ensureUsername(),
     { immediate: true }
 );
 
-/* Lớp chỉ của giáo viên đang đăng nhập */
-const classes = ref([]); // [{ id, name }]
+const classes = ref([]);
 const selectedClassId = ref(null);
-
-/* Filters (lọc trên FE) */
-const keyword = ref(''); // tên học sinh / phụ huynh
+const keyword = ref('');
 const statusFilter = ref('ALL');
 const dateFrom = ref(null);
 const dateTo = ref(null);
-
-/* Data */
 const loading = ref(false);
-const rows = ref([]); // dữ liệu gốc từ backend
+const rows = ref([]);
 const detailVisible = ref(false);
 const detailItem = ref(null);
 
-/* SweetAlert toast */
 const swalToast = Swal.mixin({
     toast: true,
     position: 'top-end',
     showConfirmButton: false,
-    timer: 2200,
+    timer: 2500,
     timerProgressBar: true
 });
 
@@ -103,6 +80,7 @@ function formatDate(val) {
     if (Number.isNaN(d.getTime())) return '';
     return d.toLocaleDateString('vi-VN');
 }
+
 function formatDateTime(val) {
     if (!val) return '';
     const d = val instanceof Date ? val : new Date(val);
@@ -119,28 +97,22 @@ function toYMD(d) {
     return `${yyyy}-${mm}-${dd}`;
 }
 
-/* 🔹 Lấy danh sách lớp theo giáo viên đang đăng nhập */
 async function loadClasses() {
     try {
-        const list = await fetchMyTeacherClasses(); // ApiResponse<List<ClassResponse>>
+        const list = await fetchMyTeacherClasses();
         classes.value = (list || []).map((c) => ({
             id: c.id,
             name: c.className || c.name || `Lớp ${c.id}`
         }));
-
         if (!selectedClassId.value && classes.value.length) {
             selectedClassId.value = classes.value[0].id;
         }
     } catch (e) {
         console.error(e);
-        swalToast.fire({
-            icon: 'error',
-            title: e?.message || 'Không tải được danh sách lớp của giáo viên. Có thể phiên đăng nhập đã hết hạn.'
-        });
+        swalToast.fire({ icon: 'error', title: e?.message || 'Không tải được danh sách lớp' });
     }
 }
 
-/* 🔹 Load list từ BE: /leave-requests/teachers/classes/{classId}/pending */
 async function load() {
     if (!selectedClassId.value) {
         rows.value = [];
@@ -148,38 +120,28 @@ async function load() {
     }
     loading.value = true;
     try {
-        // ✅ service đã trả về mảng, không còn res.data.data
         const list = await fetchPendingLeaveRequestsByClass(selectedClassId.value);
         rows.value = Array.isArray(list) ? list : [];
     } catch (e) {
         console.error(e);
-        swalToast.fire({
-            icon: 'error',
-            title: e?.message || 'Không tải được danh sách đơn xin nghỉ'
-        });
+        swalToast.fire({ icon: 'error', title: e?.message || 'Không tải được danh sách đơn' });
     } finally {
         loading.value = false;
     }
 }
 
-/* Lọc trên FE theo keyword, status, từ ngày - đến ngày */
 const filteredRows = computed(() => {
     let data = rows.value || [];
 
-    // Lọc theo keyword (tên học sinh / phụ huynh)
     if (keyword.value) {
         const kw = keyword.value.toLowerCase().trim();
-        data = data.filter((r) => {
-            return (r.studentName && r.studentName.toLowerCase().includes(kw)) || (r.parentName && r.parentName.toLowerCase().includes(kw));
-        });
+        data = data.filter((r) => (r.studentName && r.studentName.toLowerCase().includes(kw)) || (r.parentName && r.parentName.toLowerCase().includes(kw)));
     }
 
-    // Lọc theo trạng thái (hiện tại backend teacher chỉ trả PENDING)
     if (statusFilter.value !== 'ALL') {
         data = data.filter((r) => r.status === statusFilter.value);
     }
 
-    // Lọc theo ngày nghỉ (leaveDate)
     if (dateFrom.value) {
         const from = new Date(toYMD(dateFrom.value));
         data = data.filter((r) => {
@@ -199,252 +161,407 @@ const filteredRows = computed(() => {
     return data;
 });
 
-/* Helper lấy meta status */
-function getStatusMeta(status) {
-    return STATUS[status] || { label: status || '-', color: 'info' };
+const groupedRows = computed(() => {
+    const map = new Map();
+
+    (filteredRows.value || []).forEach((r) => {
+        if (!r) return;
+        const explicitGroupId = r.groupId || r.groupCode || r.requestGroupId || r.batchId;
+        const createdDay = r.createdAt ? toYMD(r.createdAt) : '';
+        const key = explicitGroupId || `${r.studentCode || r.studentName || ''}|${r.parentName || ''}|${r.className || ''}|${r.reason || ''}|${createdDay}`;
+
+        if (!map.has(key)) {
+            map.set(key, {
+                key,
+                studentName: r.studentName,
+                studentCode: r.studentCode,
+                className: r.className,
+                parentName: r.parentName,
+                reason: r.reason,
+                createdAt: r.createdAt,
+                items: []
+            });
+        }
+
+        const g = map.get(key);
+        g.items.push(r);
+
+        if (r.createdAt && (!g.createdAt || new Date(r.createdAt) < new Date(g.createdAt))) {
+            g.createdAt = r.createdAt;
+        }
+    });
+
+    const groups = Array.from(map.values());
+
+    groups.forEach((g) => {
+        g.items.sort((a, b) => new Date(a.leaveDate) - new Date(b.leaveDate));
+        g.firstLeaveDate = g.items.length ? g.items[0].leaveDate : g.createdAt;
+
+        const statuses = Array.from(new Set(g.items.map((it) => it.status)));
+        g.status = statuses.includes('PENDING') ? 'PENDING' : statuses[0] || null;
+    });
+
+    groups.sort((a, b) => {
+        const da = a.firstLeaveDate ? new Date(a.firstLeaveDate) : new Date(0);
+        const db = b.firstLeaveDate ? new Date(b.firstLeaveDate) : new Date(0);
+        return db - da;
+    });
+
+    return groups;
+});
+
+const stats = computed(() => {
+    const all = rows.value || [];
+    return {
+        total: groupedRows.value.length,
+        pending: groupedRows.value.filter((g) => g.status === 'PENDING').length,
+        totalDays: all.length
+    };
+});
+
+function formatDatesSummary(group) {
+    if (!group?.items?.length) return '';
+    const dates = group.items
+        .map((it) => (it.leaveDate ? new Date(it.leaveDate) : null))
+        .filter((d) => d && !Number.isNaN(d.getTime()))
+        .sort((a, b) => a - b);
+
+    if (!dates.length) return '';
+    if (dates.length === 1) return formatDate(dates[0]);
+
+    let isContinuous = true;
+    for (let i = 1; i < dates.length; i++) {
+        const diffDays = Math.round((dates[i] - dates[i - 1]) / (1000 * 60 * 60 * 24));
+        if (diffDays !== 1) {
+            isContinuous = false;
+            break;
+        }
+    }
+
+    if (isContinuous) {
+        return `${formatDate(dates[0])} → ${formatDate(dates[dates.length - 1])}`;
+    }
+
+    const firstTwo = dates.slice(0, 2).map((d) => formatDate(d));
+    let text = firstTwo.join(', ');
+    if (dates.length > 2) text += ` (+${dates.length - 2})`;
+    return text;
 }
 
-/* Duyệt / từ chối đơn (gọi đúng API approve/reject) */
-async function changeStatus(row, newStatus) {
-    if (!row?.id) return;
-    if (row.status === newStatus) return;
+function getStatusMeta(status) {
+    return STATUS[status] || { label: status || '-', class: '' };
+}
 
-    // Xác nhận
-    const confirmText = newStatus === 'APPROVED' ? 'Bạn có chắc muốn DUYỆT đơn xin nghỉ này?' : 'Bạn có chắc muốn TỪ CHỐI đơn xin nghỉ này?';
+function normalizeItemsForChange(target) {
+    if (!target) return [];
+    if (Array.isArray(target)) return target;
+    if (target.items && Array.isArray(target.items)) return target.items;
+    return [target];
+}
+
+async function changeStatus(target, newStatus) {
+    const itemsAll = normalizeItemsForChange(target);
+    if (!itemsAll.length) return;
+
+    const pendingItems = itemsAll.filter((it) => it.status === 'PENDING');
+    if (!pendingItems.length) return;
+
+    const count = pendingItems.length;
+    const actionText = newStatus === 'APPROVED' ? 'duyệt' : 'từ chối';
 
     const result = await Swal.fire({
         icon: 'question',
-        title: 'Xác nhận',
-        text: confirmText,
+        title: `Xác nhận ${actionText}? `,
+        text: count > 1 ? `${count} ngày nghỉ sẽ được ${actionText}. ` : `Đơn xin nghỉ này sẽ được ${actionText}.`,
         showCancelButton: true,
         confirmButtonText: newStatus === 'APPROVED' ? 'Duyệt' : 'Từ chối',
         cancelButtonText: 'Hủy',
-        confirmButtonColor: newStatus === 'APPROVED' ? '#16a34a' : '#dc2626',
-        heightAuto: false
+        confirmButtonColor: newStatus === 'APPROVED' ? '#10b981' : '#ef4444'
     });
+
     if (!result.isConfirmed) return;
 
     try {
-        if (newStatus === 'APPROVED') {
-            await approveLeaveRequest(row.id, currentUser.value, row.teacherNote || '');
-            swalToast.fire({
-                icon: 'success',
-                title: 'Đã duyệt đơn xin nghỉ'
-            });
-        } else if (newStatus === 'REJECTED') {
-            await rejectLeaveRequest(row.id, currentUser.value, row.teacherNote || '');
-            swalToast.fire({
-                icon: 'warning',
-                title: 'Đã từ chối đơn xin nghỉ'
-            });
-        } else {
-            return;
+        for (const row of pendingItems) {
+            if (!row?.id) continue;
+            if (newStatus === 'APPROVED') {
+                await approveLeaveRequest(row.id, currentUser.value, row.teacherNote || '');
+            } else {
+                await rejectLeaveRequest(row.id, currentUser.value, row.teacherNote || '');
+            }
         }
 
-        // Reload lại danh sách pending, đơn đã xử lý sẽ biến mất
+        swalToast.fire({
+            icon: 'success',
+            title: newStatus === 'APPROVED' ? 'Đã duyệt đơn' : 'Đã từ chối đơn'
+        });
+
         await load();
-        if (detailVisible.value) {
-            detailVisible.value = false;
-        }
+        detailVisible.value = false;
     } catch (e) {
         console.error(e);
-        swalToast.fire({
-            icon: 'error',
-            title: e?.response?.data?.message || e?.message || 'Cập nhật trạng thái thất bại'
-        });
+        swalToast.fire({ icon: 'error', title: e?.message || 'Thao tác thất bại' });
     }
 }
 
-function openDetail(row) {
-    detailItem.value = row;
+function openDetail(group) {
+    detailItem.value = group;
     detailVisible.value = true;
+}
+
+function clearFilters() {
+    keyword.value = '';
+    statusFilter.value = 'ALL';
+    dateFrom.value = null;
+    dateTo.value = null;
 }
 
 onMounted(async () => {
     await ensureUsername();
-    await loadClasses(); // khi set selectedClassId, watch bên dưới sẽ tự gọi load()
+    await loadClasses();
 });
 
-/* Chỉ reload khi đổi lớp */
 watch(selectedClassId, () => {
-    if (selectedClassId.value) {
-        load();
-    }
+    if (selectedClassId.value) load();
 });
 </script>
 
 <template>
-    <div class="px-4 md:px-6 lg:px-8 py-5 space-y-4 leave-page">
+    <div class="leave-page">
         <!-- Header -->
-        <div class="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 flex items-center justify-between">
-            <div>
-                <h1 class="text-xl font-semibold text-slate-800">Đơn xin nghỉ học</h1>
-                <p class="text-sm text-slate-500 mt-1">Giáo viên duyệt đơn xin nghỉ theo từng lớp đang phụ trách.</p>
+        <div class="page-header">
+            <div class="header-left">
+                <h1>Đơn xin nghỉ học</h1>
+                <p>Duyệt đơn xin nghỉ của học sinh trong lớp phụ trách</p>
             </div>
-            <div class="hidden md:flex flex-col items-end text-xs text-slate-500">
-                <span
-                    >Người xử lý: <b>{{ currentUser }}</b></span
-                >
+            <div class="header-right">
+                <span class="user-badge">
+                    <i class="fa-solid fa-user-tie"></i>
+                    {{ currentUser }}
+                </span>
             </div>
         </div>
 
-        <!-- Bộ lọc -->
-        <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <!-- Chọn lớp -->
-                <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">Lớp phụ trách</label>
-                    <Dropdown v-model="selectedClassId" :options="classes" optionLabel="name" optionValue="id" placeholder="Chọn lớp" class="w-full" />
-                    <p v-if="!classes.length" class="mt-1 text-[11px] text-amber-600">Tài khoản giáo viên hiện chưa được gán lớp nào hoặc bạn chưa có quyền xem lớp.</p>
+        <!-- Stats -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="stat-icon total">
+                    <i class="fa-solid fa-file-lines"></i>
                 </div>
+                <div class="stat-info">
+                    <div class="stat-value">{{ stats.total }}</div>
+                    <div class="stat-label">Tổng đơn</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon pending">
+                    <i class="fa-solid fa-clock"></i>
+                </div>
+                <div class="stat-info">
+                    <div class="stat-value">{{ stats.pending }}</div>
+                    <div class="stat-label">Chờ duyệt</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon days">
+                    <i class="fa-solid fa-calendar-days"></i>
+                </div>
+                <div class="stat-info">
+                    <div class="stat-value">{{ stats.totalDays }}</div>
+                    <div class="stat-label">Ngày nghỉ</div>
+                </div>
+            </div>
+        </div>
 
-                <!-- Trạng thái -->
-                <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">Trạng thái</label>
+        <!-- Filters -->
+        <div class="filter-section">
+            <div class="filter-grid">
+                <div class="filter-item">
+                    <label>Lớp phụ trách</label>
+                    <Dropdown v-model="selectedClassId" :options="classes" optionLabel="name" optionValue="id" placeholder="Chọn lớp" class="w-full" />
+                </div>
+                <div class="filter-item">
+                    <label>Trạng thái</label>
                     <Dropdown v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" class="w-full" />
                 </div>
-
-                <!-- Tìm kiếm -->
-                <div>
-                    <label class="block text-xs font-medium text-slate-600 mb-1">Tìm kiếm</label>
-                    <InputText v-model="keyword" class="w-full" placeholder="Tên học sinh hoặc phụ huynh" />
+                <div class="filter-item">
+                    <label>Tìm kiếm</label>
+                    <InputText v-model="keyword" placeholder="Tên học sinh, phụ huynh..." class="w-full" />
                 </div>
-
-                <!-- Từ ngày / Đến ngày -->
-                <div class="grid grid-cols-2 gap-2">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600 mb-1">Từ ngày</label>
-                        <Calendar v-model="dateFrom" dateFormat="dd/mm/yy" class="w-full" showIcon />
+                <div class="filter-item filter-dates">
+                    <div class="date-field">
+                        <label>Từ ngày</label>
+                        <Calendar v-model="dateFrom" dateFormat="dd/mm/yy" showIcon class="w-full" />
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium text-slate-600 mb-1">Đến ngày</label>
-                        <Calendar v-model="dateTo" dateFormat="dd/mm/yy" class="w-full" showIcon />
+                    <div class="date-field">
+                        <label>Đến ngày</label>
+                        <Calendar v-model="dateTo" dateFormat="dd/mm/yy" showIcon class="w-full" />
                     </div>
                 </div>
             </div>
 
-            <div class="flex items-center justify-between pt-1">
-                <div class="text-xs text-slate-500">
-                    Tổng đơn đang hiển thị:
-                    <b>{{ filteredRows.length }}</b>
-                </div>
-                <div class="flex gap-2">
-                    <Button class="!bg-slate-100 !border-0 !text-slate-700 text-xs" icon="fa-solid fa-rotate mr-2" :label="loading ? 'Đang tải...' : 'Tải lại'" :disabled="loading" @click="load" />
+            <div class="filter-actions">
+                <span class="filter-result">
+                    Hiển thị <strong>{{ groupedRows.length }}</strong> đơn
+                </span>
+                <div class="action-btns">
+                    <button class="btn-icon" @click="clearFilters" title="Xóa bộ lọc">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                    <button class="btn-icon" :disabled="loading" @click="load" title="Tải lại">
+                        <i class="fa-solid fa-rotate" :class="{ 'fa-spin': loading }"></i>
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Danh sách đơn -->
-        <div class="space-y-3">
-            <div v-if="loading" class="border border-slate-200 rounded-xl bg-white px-4 py-6 flex items-center justify-center text-sm text-slate-500">
-                <i class="fa-solid fa-spinner fa-spin mr-2"></i>
-                Đang tải danh sách đơn xin nghỉ...
+        <!-- List -->
+        <div class="list-section">
+            <!-- Loading -->
+            <div v-if="loading" class="loading-state">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Đang tải...</span>
             </div>
 
-            <div v-else-if="!filteredRows.length" class="border border-dashed border-slate-300 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Không có đơn xin nghỉ nào phù hợp với bộ lọc hiện tại.</div>
+            <!-- Empty -->
+            <div v-else-if="!groupedRows.length" class="empty-state">
+                <i class="fa-solid fa-inbox"></i>
+                <p>Không có đơn xin nghỉ nào</p>
+            </div>
 
-            <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <Card v-for="req in filteredRows" :key="req.id" class="leave-card border border-slate-200 hover:border-indigo-300 hover:shadow-md transition cursor-pointer" @click="openDetail(req)">
-                    <template #title>
-                        <div class="flex items-start justify-between gap-2">
-                            <div>
-                                <div class="text-sm font-semibold text-slate-800">
-                                    {{ req.studentName }}
-                                </div>
-                                <div class="text-xs text-slate-500">Mã HS: {{ req.studentCode }} · Lớp: {{ req.className }}</div>
-                            </div>
-                            <Tag v-if="req.status" :value="getStatusMeta(req.status).label" :severity="getStatusMeta(req.status).color" class="text-[11px]" />
+            <!-- Cards -->
+            <div v-else class="leave-list">
+                <div v-for="group in groupedRows" :key="group.key" class="leave-card" :class="{ 'is-pending': group.status === 'PENDING' }" @click="openDetail(group)">
+                    <div class="card-left">
+                        <div class="student-avatar">
+                            {{ group.studentName?.charAt(0) || '?' }}
                         </div>
-                    </template>
+                    </div>
 
-                    <template #content>
-                        <div class="space-y-1 text-xs text-slate-600">
-                            <div>
-                                <span class="font-medium">Phụ huynh:</span>
-                                <span> {{ req.parentName }}</span>
-                            </div>
-                            <div>
-                                <span class="font-medium">Ngày nghỉ:</span>
-                                <span> {{ formatDate(req.leaveDate) }}</span>
-                            </div>
-                            <div>
-                                <span class="font-medium">Lý do:</span>
-                                <span> {{ req.reason || '(Không ghi rõ)' }}</span>
-                            </div>
-                            <div class="text-[11px] text-slate-400 mt-1">Gửi lúc: {{ formatDateTime(req.createdAt) }}</div>
+                    <div class="card-body">
+                        <div class="card-header">
+                            <div class="student-name">{{ group.studentName }}</div>
+                            <span class="status-badge" :class="getStatusMeta(group.status).class">
+                                {{ getStatusMeta(group.status).label }}
+                            </span>
                         </div>
 
-                        <div class="flex justify-end gap-2 mt-3">
-                            <Button v-if="req.status === 'PENDING'" class="!bg-emerald-600 !border-0 !text-white !text-xs" icon="fa-solid fa-check mr-2" label="Duyệt" @click.stop="changeStatus(req, 'APPROVED')" />
-                            <Button v-if="req.status === 'PENDING'" class="!bg-rose-500 !border-0 !text-white !text-xs" icon="fa-solid fa-xmark mr-2" label="Từ chối" @click.stop="changeStatus(req, 'REJECTED')" />
+                        <div class="card-meta">
+                            <span><i class="fa-solid fa-id-card"></i> {{ group.studentCode }}</span>
+                            <span><i class="fa-solid fa-school"></i> {{ group.className }}</span>
                         </div>
-                    </template>
-                </Card>
+
+                        <div class="card-details">
+                            <div class="detail-row">
+                                <i class="fa-solid fa-user"></i>
+                                <span>{{ group.parentName }}</span>
+                            </div>
+                            <div class="detail-row">
+                                <i class="fa-regular fa-calendar"></i>
+                                <span>{{ formatDatesSummary(group) }}</span>
+                                <span class="days-count">{{ group.items.length }} ngày</span>
+                            </div>
+                            <div class="detail-row reason">
+                                <i class="fa-solid fa-message"></i>
+                                <span>{{ group.reason || 'Không ghi lý do' }}</span>
+                            </div>
+                        </div>
+
+                        <div class="card-time">
+                            <i class="fa-regular fa-clock"></i>
+                            {{ formatDateTime(group.createdAt) }}
+                        </div>
+                    </div>
+
+                    <div class="card-actions" v-if="group.status === 'PENDING'" @click.stop>
+                        <button class="action-approve" @click="changeStatus(group, 'APPROVED')" title="Duyệt">
+                            <i class="fa-solid fa-check"></i>
+                        </button>
+                        <button class="action-reject" @click="changeStatus(group, 'REJECTED')" title="Từ chối">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Dialog chi tiết đơn -->
-        <Dialog v-model:visible="detailVisible" modal :style="{ width: '520px', maxWidth: '95vw' }" contentClass="leave-detail-dialog">
+        <!-- Detail Dialog -->
+        <Dialog v-model:visible="detailVisible" modal :style="{ width: '480px', maxWidth: '95vw' }" class="detail-dialog">
             <template #header>
-                <div class="flex flex-col">
-                    <div class="text-base font-semibold text-slate-800">Chi tiết đơn xin nghỉ</div>
-                    <div v-if="detailItem" class="text-xs text-slate-500 mt-0.5">
-                        Học sinh: <b>{{ detailItem.studentName }}</b> · Lớp:
-                        <b>{{ detailItem.className }}</b>
-                    </div>
+                <div class="dialog-header">
+                    <h3>Chi tiết đơn xin nghỉ</h3>
                 </div>
             </template>
 
-            <div v-if="detailItem" class="space-y-2 text-sm text-slate-700">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <span class="font-medium">Học sinh:</span>
-                        {{ detailItem.studentName }} ({{ detailItem.studentCode }})
+            <div v-if="detailItem" class="dialog-content">
+                <!-- Student Info -->
+                <div class="info-section">
+                    <div class="info-header">
+                        <div class="info-avatar">
+                            {{ detailItem.studentName?.charAt(0) || '?' }}
+                        </div>
+                        <div class="info-main">
+                            <div class="info-name">{{ detailItem.studentName }}</div>
+                            <div class="info-sub">{{ detailItem.studentCode }} · {{ detailItem.className }}</div>
+                        </div>
+                        <span class="status-badge" :class="getStatusMeta(detailItem.status).class">
+                            {{ getStatusMeta(detailItem.status).label }}
+                        </span>
                     </div>
-                    <Tag :value="getStatusMeta(detailItem.status).label" :severity="getStatusMeta(detailItem.status).color" class="text-[11px]" />
                 </div>
 
-                <div><span class="font-medium">Lớp:</span> {{ detailItem.className }}</div>
-
-                <div>
-                    <span class="font-medium">Phụ huynh:</span>
-                    {{ detailItem.parentName }}
+                <!-- Details -->
+                <div class="detail-list">
+                    <div class="detail-item">
+                        <i class="fa-solid fa-user"></i>
+                        <div>
+                            <div class="label">Phụ huynh</div>
+                            <div class="value">{{ detailItem.parentName }}</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fa-solid fa-message"></i>
+                        <div>
+                            <div class="label">Lý do</div>
+                            <div class="value">{{ detailItem.reason || 'Không ghi lý do' }}</div>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fa-regular fa-clock"></i>
+                        <div>
+                            <div class="label">Thời gian gửi</div>
+                            <div class="value">{{ formatDateTime(detailItem.createdAt) }}</div>
+                        </div>
+                    </div>
                 </div>
 
-                <div>
-                    <span class="font-medium">Ngày nghỉ:</span>
-                    {{ formatDate(detailItem.leaveDate) }}
-                </div>
-
-                <div>
-                    <span class="font-medium">Lý do:</span>
-                    {{ detailItem.reason || '(Không ghi rõ)' }}
-                </div>
-
-                <div>
-                    <span class="font-medium">Thời gian gửi:</span>
-                    {{ formatDateTime(detailItem.createdAt) }}
-                </div>
-
-                <div v-if="detailItem.approvedBy">
-                    <span class="font-medium">Người xử lý:</span>
-                    {{ detailItem.approvedBy }} ·
-                    <span class="font-medium">Lúc:</span>
-                    {{ formatDateTime(detailItem.approvedAt) }}
-                </div>
-
-                <div v-if="detailItem.teacherNote">
-                    <span class="font-medium">Ghi chú của giáo viên:</span>
-                    {{ detailItem.teacherNote }}
+                <!-- Days Table -->
+                <div class="days-section">
+                    <div class="section-title">Các ngày xin nghỉ ({{ detailItem.items.length }})</div>
+                    <div class="days-table">
+                        <div v-for="(item, idx) in detailItem.items" :key="item.id" class="day-row">
+                            <span class="day-index">{{ idx + 1 }}</span>
+                            <span class="day-date">{{ formatDate(item.leaveDate) }}</span>
+                            <span class="status-badge small" :class="getStatusMeta(item.status).class">
+                                {{ getStatusMeta(item.status).label }}
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <template #footer>
-                <div class="flex justify-between items-center w-full">
-                    <Button label="Đóng" class="p-button-text !text-slate-600" @click="detailVisible = false" />
-                    <div class="flex gap-2">
-                        <Button v-if="detailItem && detailItem.status === 'PENDING'" class="!bg-emerald-600 !border-0 !text-white !text-xs" icon="fa-solid fa-check mr-2" label="Duyệt" @click="changeStatus(detailItem, 'APPROVED')" />
-                        <Button v-if="detailItem && detailItem.status === 'PENDING'" class="!bg-rose-500 !border-0 !text-white !text-xs" icon="fa-solid fa-xmark mr-2" label="Từ chối" @click="changeStatus(detailItem, 'REJECTED')" />
+                <div class="dialog-footer">
+                    <button class="btn-secondary" @click="detailVisible = false">Đóng</button>
+                    <div v-if="detailItem?.status === 'PENDING'" class="footer-actions">
+                        <button class="btn-reject" @click="changeStatus(detailItem, 'REJECTED')">
+                            <i class="fa-solid fa-xmark"></i>
+                            Từ chối
+                        </button>
+                        <button class="btn-approve" @click="changeStatus(detailItem, 'APPROVED')">
+                            <i class="fa-solid fa-check"></i>
+                            Duyệt
+                        </button>
                     </div>
                 </div>
             </template>
@@ -454,16 +571,635 @@ watch(selectedClassId, () => {
 
 <style scoped>
 .leave-page {
-    background: #f8fafc;
     min-height: 100vh;
+    background: #f8fafc;
+    padding: 24px;
 }
 
-.leave-card :deep(.p-card-body) {
-    padding: 12px 14px 10px;
+/* Header */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+
+.header-left h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0;
+}
+
+.header-left p {
+    font-size: 14px;
+    color: #64748b;
+    margin: 4px 0 0;
+}
+
+.user-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #475569;
+}
+
+.user-badge i {
+    color: #64748b;
+}
+
+/* Stats */
+.stats-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.stat-card {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+
+.stat-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+}
+
+.stat-icon. total {
+    background: #e0e7ff;
+    color: #4f46e5;
+}
+
+.stat-icon.pending {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.stat-icon.days {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.stat-label {
+    font-size: 13px;
+    color: #64748b;
+}
+
+/* Filters */
+.filter-section {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.filter-item label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+}
+
+.filter-dates {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.date-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.filter-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #f1f5f9;
+}
+
+.filter-result {
+    font-size: 13px;
+    color: #64748b;
+}
+
+.action-btns {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fff;
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0 2s;
+}
+
+.btn-icon:hover {
+    background: #f8fafc;
+    color: #475569;
+}
+
+/* List */
+.list-section {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    min-height: 400px;
+}
+
+.loading-state,
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: #94a3b8;
+}
+
+.loading-state i,
+.empty-state i {
+    font-size: 32px;
+    margin-bottom: 12px;
+}
+
+.empty-state p {
+    margin: 0;
+    font-size: 14px;
+}
+
+/* Leave Cards */
+.leave-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.leave-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.leave-card:hover {
+    border-color: #cbd5e1;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.leave-card.is-pending {
+    border-left: 3px solid #f59e0b;
+}
+
+.card-left {
+    flex-shrink: 0;
+}
+
+.student-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+    color: #4f46e5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.card-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.student-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.card-meta {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.card-meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.card-meta i {
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+.card-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.detail-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #475569;
+}
+
+.detail-row i {
+    width: 14px;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.detail-row. reason {
+    color: #64748b;
+}
+
+.days-count {
+    margin-left: auto;
+    padding: 2px 8px;
+    background: #f1f5f9;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #64748b;
+}
+
+.card-time {
+    font-size: 11px;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.action-approve,
+.action-reject {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0 2s;
+}
+
+.action-approve {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.action-approve:hover {
+    background: #10b981;
+    color: #fff;
+}
+
+.action-reject {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.action-reject:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* Status Badges */
+. status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.status-badge.small {
+    padding: 2px 8px;
+    font-size: 10px;
+}
+
+.status-pending {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.status-approved {
+    background: #d1fae5;
+    color: #047857;
+}
+
+.status-rejected {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+. status-cancelled {
+    background: #f1f5f9;
+    color: #64748b;
 }
 
 /* Dialog */
-.leave-detail-dialog {
-    padding-top: 0.75rem;
+.dialog-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+. dialog-content {
+    padding: 0;
+}
+
+.info-section {
+    padding-bottom: 16px;
+    border-bottom: 1px solid #f1f5f9;
+    margin-bottom: 16px;
+}
+
+.info-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.info-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+    color: #4f46e5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.info-main {
+    flex: 1;
+}
+
+.info-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+. info-sub {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+. detail-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.detail-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.detail-item i {
+    width: 16px;
+    margin-top: 2px;
+    color: #94a3b8;
+}
+
+.detail-item . label {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-bottom: 2px;
+}
+
+.detail-item . value {
+    font-size: 14px;
+    color: #1e293b;
+}
+
+.days-section {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 14px;
+}
+
+.section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+    margin-bottom: 12px;
+}
+
+. days-table {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.day-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #fff;
+    border-radius: 8px;
+}
+
+.day-index {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: #e2e8f0;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.day-date {
+    flex: 1;
+    font-size: 14px;
+    color: #1e293b;
+}
+
+/* Dialog Footer */
+.dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.footer-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-secondary,
+.btn-approve,
+.btn-reject {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.btn-secondary {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.btn-secondary:hover {
+    background: #e2e8f0;
+}
+
+.btn-approve {
+    background: #10b981;
+    color: #fff;
+}
+
+.btn-approve:hover {
+    background: #059669;
+}
+
+.btn-reject {
+    background: #ef4444;
+    color: #fff;
+}
+
+.btn-reject:hover {
+    background: #dc2626;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .filter-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .leave-page {
+        padding: 16px;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .stats-row {
+        flex-direction: column;
+    }
+
+    .filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .filter-dates {
+        grid-template-columns: 1fr;
+    }
+
+    .leave-card {
+        flex-direction: column;
+    }
+
+    .card-actions {
+        flex-direction: row;
+        width: 100%;
+    }
+
+    . action-approve,
+    .action-reject {
+        flex: 1;
+    }
 }
 </style>

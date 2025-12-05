@@ -128,7 +128,7 @@ const router = createRouter({
                     path: 'teacher/my-students',
                     name: 'TeacherMyStudents',
                     component: () => import('@/views/pages/teacher/MyClassStudents.vue'),
-                    meta: { requiresAuth: true, roles: ['TEACHER'] }
+                    meta: { requiresAuth: true, roles: ['TEACHER', 'ADMIN'] }
                 }
             ]
         },
@@ -157,6 +157,12 @@ const router = createRouter({
             component: () => import('@/views/pages/auth/Login.vue'),
             meta: { guestOnly: true }
         },
+        {
+            path: '/forgot-password',
+            name: 'ForgotPassword',
+            component: () => import('@/views/pages/auth/ForgotPassword.vue')
+        },
+
         {
             path: '/auth/access',
             name: 'accessDenied',

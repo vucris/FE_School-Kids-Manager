@@ -11,7 +11,9 @@ export const http = axios.create({
     timeout: 15000,
     withCredentials: USE_CREDENTIALS,
     headers: {
-        'Content-Type': 'application/json',
+        // ❌ KHÔNG ép Content-Type là JSON nữa
+        // 'Content-Type': 'application/json',
+        // ✅ Chỉ cần Accept, axios sẽ tự set Content-Type phù hợp (JSON / multipart...)
         Accept: 'application/json'
     }
 });
@@ -24,7 +26,10 @@ http.interceptors.request.use(
 
         const auth = getAuthStore?.();
         const token = auth?.accessToken;
-        if (token) config.headers.Authorization = `Bearer ${token}`;
+        if (token) {
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${token}`;
+        }
         return config;
     },
     (error) => {
@@ -49,9 +54,12 @@ http.interceptors.response.use(
         loadingBar.stop();
 
         const original = error.config || {};
+        // 401 -> refresh token
         if (error.response?.status === 401 && !original.__isRetryRequest) {
             const auth = getAuthStore?.();
-            if (!auth?.refreshToken) return Promise.reject(error);
+            if (!auth?.refreshToken) {
+                return Promise.reject(error);
+            }
 
             if (!isRefreshing) {
                 isRefreshing = true;
@@ -75,6 +83,7 @@ http.interceptors.response.use(
                 }
             }
 
+            // Đang refresh -> đợi
             return new Promise((resolve) => {
                 queue.push((newToken) => {
                     original.__isRetryRequest = true;
@@ -84,6 +93,7 @@ http.interceptors.response.use(
                 });
             });
         }
+
         return Promise.reject(error);
     }
 );

@@ -294,6 +294,21 @@ export async function fetchMyTeacherClasses() {
         );
     }
 }
+export async function createTeacher(payload) {
+    const url = withApiV1('/auth/register/teacher');
+    try {
+        const res = await http.post(url, payload, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        // AuthController trả String, nên lấy res.data là đủ
+        return res?.data ?? true;
+    } catch (err) {
+        throw new Error(getErrMsg(err, 'Tạo giáo viên thất bại'));
+    }
+}
 export async function fetchTeacherClasses() {
     const raw = await fetchMyTeacherClasses();
     return raw.map((c) => ({
@@ -317,3 +332,32 @@ export async function fetchMyTeacherClassDetail(classId) {
         );
     }
 }
+export async function fetchTeachersLite() {
+    // Lấy tối đa 10k GV, trường mầm non là đủ
+    const { items } = await fetchTeachers({
+        status: 'all',
+        page: 1,
+        size: 10000
+    });
+
+    return (items || []).map((t) => ({
+        value: t.id,
+        label: t.employeeCode
+            ? `${t.name} (${t.employeeCode})`
+            : t.name
+    }));
+}
+export default {
+    fetchTeachers,
+    fetchTeacherById,
+    updateTeacher,
+    toggleTeacherStatus,
+    importTeachersExcel,
+    exportTeachersExcel,
+    downloadTeachersImportTemplate,
+    fetchMyTeacherClasses,
+    fetchTeacherClasses,
+    fetchMyTeacherClassDetail,
+    fetchTeachersLite,
+       createTeacher
+};

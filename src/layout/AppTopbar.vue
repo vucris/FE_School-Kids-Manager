@@ -77,11 +77,11 @@ async function onLogout() {
                 <!-- ✅ Thay router-link bằng button để mở modal -->
                 <button type="button" class="layout-topbar-action" @click="openProfileModal"><i class="pi pi-user"></i><span>Hồ sơ</span></button>
 
-                <router-link to="/settings" class="layout-topbar-action" role="button"> <i class="pi pi-cog"></i><span>Cài đặt</span> </router-link>
 
-                <router-link to="/auth/change-password" class="layout-topbar-action" role="button"> <i class="pi pi-key"></i><span>Đổi mật khẩu</span> </router-link>
 
-                <router-link to="/notifications" class="layout-topbar-action" role="button"> <i class="pi pi-bell"></i><span>Trang thông báo</span> </router-link>
+
+
+
 
                 <button type="button" class="layout-topbar-action" @click="onLogout"><i class="pi pi-sign-out"></i><span>Đăng xuất</span></button>
             </div>

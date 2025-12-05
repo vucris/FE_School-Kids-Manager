@@ -24,7 +24,7 @@ export const useAuthStore = defineStore('auth', {
         accessToken: localStorage.getItem('access_token') || '',
         refreshToken: localStorage.getItem('refresh_token') || '',
         user: readJSON('auth_user', null),
-        role: localStorage.getItem('role') || '' // 👈 thêm dòng này
+        role: localStorage.getItem('role') || ''
     }),
 
     getters: {
@@ -58,18 +58,21 @@ export const useAuthStore = defineStore('auth', {
 
         // 🔐 LOGIN
         async login({ username, password }) {
-            const { data } = await axios.post(`${BASE_URL}/auth/login`, { username, password }, { withCredentials: WITH_CREDENTIALS });
+            const { data } = await axios.post(
+                `${BASE_URL}/auth/login`,
+                { username, password },
+                { withCredentials: WITH_CREDENTIALS }
+            );
 
             const { access, refresh } = getTokensFromResponse(data);
             this.setTokens(access, refresh);
 
-            // 👉 chuẩn hóa role: bỏ prefix "ROLE_"
+            // chuẩn hóa role: bỏ prefix "ROLE_"
             const rawRole = data.role || '';
             const normalizedRole = rawRole.startsWith('ROLE_') ? rawRole.substring(5) : rawRole;
             this.role = normalizedRole;
             localStorage.setItem('role', normalizedRole);
 
-            // nếu muốn lưu thêm info user
             this.setUser({
                 username: data.username,
                 role: normalizedRole
@@ -81,7 +84,11 @@ export const useAuthStore = defineStore('auth', {
         async refreshTokenOnce() {
             if (!this.refreshToken) throw new Error('No refresh token');
 
-            const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken: this.refreshToken }, { withCredentials: WITH_CREDENTIALS });
+            const { data } = await axios.post(
+                `${BASE_URL}/auth/refresh`,
+                { refreshToken: this.refreshToken },
+                { withCredentials: WITH_CREDENTIALS }
+            );
 
             const { access, refresh } = getTokensFromResponse(data);
             this.setTokens(access, refresh || this.refreshToken);
@@ -103,6 +110,35 @@ export const useAuthStore = defineStore('auth', {
                 this.role = '';
                 localStorage.removeItem('role');
             }
+        },
+
+        // ================== QUÊN MẬT KHẨU – OTP GMAIL ==================
+
+        /** Bước 1: gửi OTP về email */
+        async requestChangePassword(email) {
+            const cleanEmail = String(email).trim();
+
+            const { data } = await axios.post(
+                `${BASE_URL}/auth/request-change-password`,
+                cleanEmail, // body là plain text
+                {
+                    withCredentials: WITH_CREDENTIALS,
+                    headers: {
+                        'Content-Type': 'text/plain'   // 👈 bắt buộc để BE nhận đúng @RequestBody String
+                    }
+                }
+            );
+            return data; // "Mã OTP đã được gửi tới email của bạn."
+        },
+
+        /** Bước 2: xác nhận OTP + đổi mật khẩu */
+        async changePassword({ email, code, newPassword }) {
+            const { data } = await axios.post(
+                `${BASE_URL}/auth/change-password`,
+                { email, code, newPassword },
+                { withCredentials: WITH_CREDENTIALS }
+            );
+            return data; // "Đổi mật khẩu thành công!"
         }
     }
 });

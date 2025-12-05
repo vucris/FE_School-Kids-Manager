@@ -41,7 +41,7 @@ function getErr(e, fallback) {
  * ⭐ Chuyển Date/ISO string → yyyy-MM-dd (LocalDate)
  * để gửi cho các field backend kiểu LocalDate (dueDate, paymentDate,…)
  */
-function toLocalDateString(value) {
+export function toLocalDateString(value) {
     if (!value) return null;
 
     // Nếu là Date
@@ -65,8 +65,14 @@ function toLocalDateString(value) {
     return value;
 }
 
-/* ==== APIs ==== */
+/* ============================================================================
+ *                           CÁC API TRA CỨU / DANH MỤC
+ * ==========================================================================*/
 
+/**
+ * Lấy học phí theo lớp + kỳ + năm
+ * GET /fees/class/{classId}/semester?semester&year
+ */
 export async function fetchFeesByClassAndSemesterYear({ classId, semester, year }) {
     if (!classId) throw new Error('Thiếu classId');
     const url = withApiV1(`/fees/class/${classId}/semester`);
@@ -80,6 +86,10 @@ export async function fetchFeesByClassAndSemesterYear({ classId, semester, year 
     }
 }
 
+/**
+ * Lấy tổng hợp học phí theo lớp + kỳ + năm
+ * GET /fees/summary?classId&semester&year
+ */
 export async function fetchFeeSummary({ classId, semester, year }) {
     if (!classId) throw new Error('Thiếu classId');
     const url = withApiV1('/fees/summary');
@@ -93,6 +103,10 @@ export async function fetchFeeSummary({ classId, semester, year }) {
     }
 }
 
+/**
+ * Danh sách kỳ học (semester) đang có trong hệ thống
+ * GET /fees/semesters
+ */
 export async function fetchAvailableSemesters() {
     const url = withApiV1('/fees/semesters');
     try {
@@ -103,6 +117,10 @@ export async function fetchAvailableSemesters() {
     }
 }
 
+/**
+ * Danh sách năm học đang có trong hệ thống
+ * GET /fees/years
+ */
 export async function fetchAvailableYears() {
     const url = withApiV1('/fees/years');
     try {
@@ -114,7 +132,81 @@ export async function fetchAvailableYears() {
 }
 
 /**
+ * Lấy học phí theo student
+ * GET /fees/student/{studentId}
+ */
+export async function fetchFeesByStudent(studentId) {
+    if (!studentId) throw new Error('Thiếu studentId');
+    const url = withApiV1(`/fees/student/${studentId}`);
+    try {
+        const res = await http.get(url);
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải học phí học sinh'));
+    }
+}
+
+/**
+ * Lấy học phí theo class (tất cả kỳ)
+ * GET /fees/class/{classId}
+ */
+export async function fetchFeesByClass(classId) {
+    if (!classId) throw new Error('Thiếu classId');
+    const url = withApiV1(`/fees/class/${classId}`);
+    try {
+        const res = await http.get(url);
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải học phí theo lớp'));
+    }
+}
+
+/**
+ * Lấy học phí theo kỳ + năm toàn trường
+ * GET /fees/semester?semester&year
+ */
+export async function fetchFeesBySemesterYear({ semester, year }) {
+    const url = withApiV1('/fees/semester');
+    try {
+        const res = await http.get(url, {
+            params: cleanParams({ semester, year })
+        });
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải học phí theo kỳ/năm'));
+    }
+}
+
+/* ============================================================================
+ *                           TẠO / CẬP NHẬT / XOÁ
+ * ==========================================================================*/
+
+/**
+ * Tạo học phí đơn lẻ
+ * POST /fees/create
+ */
+export async function createFee(payload) {
+    const url = withApiV1('/fees/create');
+    const body = { ...payload };
+    if (body.dueDate) {
+        body.dueDate = toLocalDateString(body.dueDate);
+    }
+    try {
+        const res = await http.post(url, body, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        return getData(res) || null;
+    } catch (e) {
+        throw new Error(getErr(e, 'Tạo học phí thất bại'));
+    }
+}
+
+/**
  * Tạo học phí hàng loạt cho 1 lớp
+ * POST /fees/bulk
  * Backend: createBulkFees(Long classId, String semester, Integer year, BigDecimal amount, LocalDate dueDate)
  */
 export async function createBulkFees({ classId, semester, year, amount, dueDate }) {
@@ -137,40 +229,52 @@ export async function createBulkFees({ classId, semester, year, amount, dueDate 
 }
 
 /**
- * Tải template Excel cho học phí
+ * Cập nhật học phí
+ * PUT /fees/{id}
  */
-export async function downloadFeeTemplate() {
-    const url = withApiV1('/fees/template');
+export async function updateFee(id, payload) {
+    if (!id) throw new Error('Thiếu id học phí');
+    const url = withApiV1(`/fees/${id}`);
+    const body = { ...payload };
+    if (body.dueDate) {
+        body.dueDate = toLocalDateString(body.dueDate);
+    }
     try {
-        const res = await http.get(url, { responseType: 'arraybuffer' });
-        return res.data;
+        const res = await http.put(url, body, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        return getData(res) || null;
     } catch (e) {
-        throw new Error(getErr(e, 'Không tải được file mẫu học phí'));
+        throw new Error(getErr(e, 'Cập nhật học phí thất bại'));
     }
 }
 
 /**
- * Import học phí từ Excel
+ * Xoá học phí theo id
+ * DELETE /fees/{id}
  */
-export async function createFeesFromExcel({ file }) {
-    if (!file) throw new Error('Thiếu file Excel');
-    const url = withApiV1('/fees/excel');
-    const form = new FormData();
-    form.append('file', file);
-
+export async function deleteFee(id) {
+    if (!id) throw new Error('Thiếu id học phí');
+    const url = withApiV1(`/fees/${id}`);
     try {
-        const res = await http.post(url, form, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        return getData(res) || [];
+        const res = await http.delete(url);
+        return getData(res) || true;
     } catch (e) {
-        throw new Error(getErr(e, 'Import học phí từ Excel thất bại'));
+        throw new Error(getErr(e, 'Xóa học phí thất bại'));
     }
 }
+
+/* ============================================================================
+ *                           THANH TOÁN HỌC PHÍ
+ * ==========================================================================*/
 
 /**
  * Thanh toán học phí
- * Backend: payFee(FeePaymentRequest request) – paymentDate là LocalDate
+ * POST /fees/payment
+ * Backend: FeePaymentRequest { feeId, amount, paymentDate(LocalDate), paymentMethod, note, receivedBy }
  */
 export async function payFee(payload) {
     const url = withApiV1('/fees/payment');
@@ -194,7 +298,13 @@ export async function payFee(payload) {
     }
 }
 
-/* ✅ Chi tiết học phí – GET /fees/{id} */
+/* ============================================================================
+ *                        CHI TIẾT / TRẠNG THÁI / QUÁ HẠN
+ * ==========================================================================*/
+
+/**
+ * Chi tiết học phí – GET /fees/{id}
+ */
 export async function fetchFeeDetail(id) {
     if (!id) throw new Error('Thiếu id học phí');
     const url = withApiV1(`/fees/${id}`);
@@ -207,21 +317,8 @@ export async function fetchFeeDetail(id) {
 }
 
 /**
- * Xoá học phí theo id
- */
-export async function deleteFee(id) {
-    if (!id) throw new Error('Thiếu id học phí');
-    const url = withApiV1(`/fees/${id}`);
-    try {
-        const res = await http.delete(url);
-        return getData(res) || true;
-    } catch (e) {
-        throw new Error(getErr(e, 'Xóa học phí thất bại'));
-    }
-}
-
-/**
  * Cập nhật trạng thái OVERDUE cho các khoản đã quá hạn
+ * POST /fees/update-overdue
  */
 export async function updateOverdueFees() {
     const url = withApiV1('/fees/update-overdue');
@@ -233,16 +330,143 @@ export async function updateOverdueFees() {
     }
 }
 
+/**
+ * Lấy danh sách học phí trễ hạn
+ * GET /fees/overdue
+ */
+export async function fetchOverdueFees() {
+    const url = withApiV1('/fees/overdue');
+    try {
+        const res = await http.get(url);
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải danh sách học phí trễ hạn'));
+    }
+}
+
+/* ============================================================================
+ *                              EXCEL EXPORT
+ * ==========================================================================*/
+
+/**
+ * Xuất Excel học phí theo lớp (có thể lọc theo kỳ & năm)
+ * GET /fees/export/excel?classId&semester&year
+ * → Controller trả về ResponseEntity<byte[]>
+ */
+export async function exportFeesToExcel({ classId, semester, year }) {
+    const url = withApiV1('/fees/export/excel');
+    try {
+        const res = await http.get(url, {
+            params: cleanParams({ classId, semester, year }),
+            responseType: 'arraybuffer'
+        });
+        return res.data; // ArrayBuffer hoặc rỗng nếu 204
+    } catch (e) {
+        throw new Error(getErr(e, 'Xuất Excel học phí thất bại'));
+    }
+}
+
+/* ============================================================================
+ *                   MINH CHỨNG / XÁC NHẬN THANH TOÁN
+ * ==========================================================================*/
+
+/**
+ * Nộp minh chứng học phí
+ * POST /fees/proof (multipart)
+ */
+export async function submitFeeProof({ feeId, file, note }) {
+    if (!feeId) throw new Error('Thiếu feeId');
+    const url = withApiV1('/fees/proof');
+    const form = new FormData();
+    form.append('feeId', feeId);
+    if (file) form.append('proofImage', file);
+    if (note) form.append('note', note);
+
+    try {
+        const res = await http.post(url, form, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return getData(res) || null;
+    } catch (e) {
+        throw new Error(getErr(e, 'Nộp minh chứng học phí thất bại'));
+    }
+}
+
+/**
+ * Xác nhận / từ chối minh chứng học phí
+ * POST /fees/verify
+ * payload: { feeId, status: 'VERIFIED' | 'REJECTED', verifiedBy, verificationNote }
+ */
+export async function verifyFeePayment(payload) {
+    const url = withApiV1('/fees/verify');
+    try {
+        const res = await http.post(url, payload, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        return getData(res) || null;
+    } catch (e) {
+        throw new Error(getErr(e, 'Xác nhận học phí thất bại'));
+    }
+}
+
+/**
+ * Danh sách học phí đang chờ xác nhận minh chứng
+ * GET /fees/waiting-verification
+ */
+export async function fetchFeesWaitingVerification() {
+    const url = withApiV1('/fees/waiting-verification');
+    try {
+        const res = await http.get(url);
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải danh sách chờ xác nhận'));
+    }
+}
+
+/* ============================================================================
+ *                            API CHO PHỤ HUYNH
+ * ==========================================================================*/
+
+/**
+ * Lấy học phí của phụ huynh (dựa theo token hiện tại)
+ * GET /fees/my-fees
+ */
+export async function fetchMyFees() {
+    const url = withApiV1('/fees/my-fees');
+    try {
+        const res = await http.get(url);
+        return getData(res) || [];
+    } catch (e) {
+        throw new Error(getErr(e, 'Không thể tải học phí của bạn'));
+    }
+}
+
+/* ============================================================================
+ *                          DEFAULT EXPORT (tuỳ chọn)
+ * ==========================================================================*/
+
 export default {
     fetchFeesByClassAndSemesterYear,
     fetchFeeSummary,
     fetchAvailableSemesters,
     fetchAvailableYears,
+    fetchFeesByStudent,
+    fetchFeesByClass,
+    fetchFeesBySemesterYear,
+    createFee,
     createBulkFees,
-    downloadFeeTemplate,
-    createFeesFromExcel,
+    updateFee,
+    deleteFee,
     payFee,
     fetchFeeDetail,
-    deleteFee,
-    updateOverdueFees
+    updateOverdueFees,
+    exportFeesToExcel,
+    submitFeeProof,
+    verifyFeePayment,
+    fetchFeesWaitingVerification,
+    fetchMyFees,
+    fetchOverdueFees
 };
