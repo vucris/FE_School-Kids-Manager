@@ -45,9 +45,9 @@ const school = ref({
     phone: '028 3 888 999',
     zalo: '0909 123 456',
     address: {
-        line1: 'Số 123, đường Hoa Phượng',
-        line2: 'Phường 7, Quận Phú Nhuận',
-        city: 'TP. Hồ Chí Minh',
+        line1: 'Số 217, đường Nguyễn Văn Linh',
+        line2: 'Phường Hải Châu',
+        city: 'TP.  Đà Nẵng',
         country: 'Việt Nam'
     },
     operation: {
@@ -55,7 +55,7 @@ const school = ref({
         closeTime: '17:30',
         days: 'Thứ Hai - Thứ Sáu (có dịch vụ trông Thứ Bảy)',
         ages: 'Từ 18 tháng đến 6 tuổi',
-        schoolYear: 'Năm học 2024 - 2025'
+        schoolYear: 'Năm học  2025'
     },
     stats: {
         campus: 1,

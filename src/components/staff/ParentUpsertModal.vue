@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, computed, watch, ref } from 'vue';
+import { reactive, watch, ref, computed } from 'vue';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Button from 'primevue/button';
@@ -7,24 +7,26 @@ import Dropdown from 'primevue/dropdown';
 import Calendar from 'primevue/calendar';
 import Swal from 'sweetalert2';
 
-import { createParent } from '@/service/parentService.js';
+import { getParentById, updateParent } from '@/service/parentService.js';
 
 const props = defineProps({
-    modelValue: {
-        type: Boolean,
-        default: false
-    },
-    // có parent => chế độ xem thông tin (view only)
-    parent: {
-        type: Object,
-        default: null
-    }
+    modelValue: { type: Boolean, default: false },
+    parent: { type: Object, default: null }
+});
+const emit = defineEmits(['update:modelValue', 'saved']);
+
+const visible = computed({
+    get: () => props.modelValue,
+    set: (v) => emit('update:modelValue', v)
 });
 
-const emit = defineEmits(['update:modelValue', 'saved']);
+const loadingDetail = ref(false);
 const submitting = ref(false);
 
-/* combobox options */
+const parentId = computed(() => props.parent?.id || null);
+const usernameDisplay = ref('');
+const statusDisplay = ref('');
+
 const genderOptions = [
     { label: 'Nam', value: 'Nam' },
     { label: 'Nữ', value: 'Nữ' },
@@ -43,62 +45,113 @@ const form = reactive({
     fullName: '',
     email: '',
     phone: '',
-    password: '', // 🔹 mật khẩu do admin nhập (tùy chọn)
     gender: null,
     dateOfBirth: null,
     occupation: '',
     relationship: null,
     emergencyContact: '',
-    additionalPhone: ''
+    additionalPhone: '',
+    address: '',
+    note: ''
 });
-
-const isCreateMode = computed(() => !props.parent);
-
-const dialogTitle = computed(() => (isCreateMode.value ? 'Thêm phụ huynh' : 'Thông tin phụ huynh'));
 
 function resetForm() {
     form.fullName = '';
     form.email = '';
     form.phone = '';
-    form.password = '';
     form.gender = null;
     form.dateOfBirth = null;
     form.occupation = '';
     form.relationship = null;
     form.emergencyContact = '';
     form.additionalPhone = '';
+    form.address = '';
+    form.note = '';
+
+    usernameDisplay.value = props.parent?.username || '';
+    statusDisplay.value = props.parent?.status || props.parent?.statusKey || '';
 }
 
-function fillFormFromParent() {
-    if (!props.parent) {
-        resetForm();
-        return;
+function pick(obj, keys, fallback = '') {
+    for (const k of keys) {
+        const v = obj?.[k];
+        if (v !== undefined && v !== null && v !== '') return v;
     }
-    form.fullName = props.parent.name || '';
-    form.email = props.parent.email || '';
-    form.phone = props.parent.phone || '';
-    form.gender = null; // BE chưa trả giới tính
-    form.dateOfBirth = props.parent.dob ? new Date(props.parent.dob) : null;
-    form.occupation = props.parent.occupation || '';
-    form.relationship = props.parent.relationship || null;
-    form.emergencyContact = props.parent.emergencyContact || '';
-    form.additionalPhone = props.parent.additionalPhone || '';
-    form.password = ''; // KHÔNG bao giờ hiển thị mật khẩu
+    return fallback;
+}
+
+function normalizeGender(v) {
+    if (!v) return null;
+    const s = String(v).trim().toUpperCase();
+    // map các kiểu BE hay trả
+    if (s === 'MALE' || s === 'M' || s === 'NAM') return 'Nam';
+    if (s === 'FEMALE' || s === 'F' || s === 'NỮ' || s === 'NU') return 'Nữ';
+    // nếu BE đã trả Nam/Nữ/Khác
+    const vi = String(v).trim();
+    if (vi === 'Nam' || vi === 'Nữ' || vi === 'Khác') return vi;
+    return null;
+}
+
+function fillFromDetail(p) {
+    form.fullName = pick(p, ['fullName', 'name']);
+    form.email = pick(p, ['email']);
+    form.phone = pick(p, ['phone']);
+
+    const rawGender = pick(p, ['gender', 'sex'], null);
+    form.gender = normalizeGender(rawGender);
+
+    const dob = pick(p, ['dateOfBirth', 'dob', 'birthDate', 'birthday'], null);
+    form.dateOfBirth = dob ? new Date(dob) : null;
+
+    form.occupation = pick(p, ['occupation', 'job', 'career'], '');
+    form.relationship = pick(p, ['relationship', 'relationShip', 'relation'], null);
+    form.emergencyContact = pick(p, ['emergencyContact', 'emergency_contact', 'emergencyPhone', 'emergency_phone'], '');
+    form.additionalPhone = pick(p, ['additionalPhone', 'additional_phone', 'secondaryPhone', 'secondPhone'], '');
+    form.address = pick(p, ['address', 'homeAddress', 'home_address', 'currentAddress', 'current_address'], '');
+    form.note = pick(p, ['note', 'notes', 'description'], '');
+
+    usernameDisplay.value = pick(p, ['username'], props.parent?.username || '');
+    statusDisplay.value = pick(p, ['status', 'statusKey'], props.parent?.status || props.parent?.statusKey || '');
+}
+
+async function loadDetail() {
+    if (!parentId.value) return;
+
+    loadingDetail.value = true;
+    try {
+        const detail = await getParentById(parentId.value);
+
+        // ✅ debug để bạn xem BE trả field gì
+        console.log('[ParentEditModal] getParentById detail =', detail);
+
+        fillFromDetail(detail || {});
+    } catch (e) {
+        // fallback: nếu API detail lỗi thì vẫn fill từ row list
+        fillFromDetail(props.parent || {});
+    } finally {
+        loadingDetail.value = false;
+    }
 }
 
 watch(
     () => props.modelValue,
-    (val) => {
-        if (!val) return;
-        if (isCreateMode.value) {
-            resetForm();
-        } else {
-            fillFormFromParent();
-        }
+    async (open) => {
+        if (!open) return;
+        resetForm();
+        await loadDetail();
     }
 );
 
-// format Date -> yyyy-MM-dd (LocalDate)
+watch(
+    () => props.parent,
+    async () => {
+        if (!props.modelValue) return;
+        resetForm();
+        await loadDetail();
+    },
+    { deep: true }
+);
+
 function formatDateToIso(d) {
     if (!d) return null;
     const year = d.getFullYear();
@@ -107,93 +160,52 @@ function formatDateToIso(d) {
     return `${year}-${month}-${day}`;
 }
 
-function closeDialog() {
-    emit('update:modelValue', false);
-}
-
-/* validate giống logic BE import: bắt buộc fullName + email + phone */
 function validateForm() {
-    if (!form.fullName.trim()) {
-        return 'Vui lòng nhập họ và tên phụ huynh';
-    }
-    if (!form.email.trim()) {
-        return 'Vui lòng nhập email';
-    }
-    if (!form.phone.trim()) {
-        return 'Vui lòng nhập số điện thoại';
-    }
-    // mật khẩu: cho phép để trống, nhưng nếu nhập thì >= 6 ký tự
-    if (form.password && form.password.trim().length < 6) {
-        return 'Mật khẩu phải có ít nhất 6 ký tự, hoặc để trống để dùng mật khẩu mặc định 123456';
-    }
+    if (!form.fullName.trim()) return 'Vui lòng nhập họ và tên phụ huynh';
+    if (!form.email.trim()) return 'Vui lòng nhập email';
+    if (!form.phone.trim()) return 'Vui lòng nhập số điện thoại';
     return null;
 }
 
-async function handleSubmit() {
+async function handleSave() {
+    if (!parentId.value) {
+        await Swal.fire({ icon: 'error', title: 'Lỗi', text: 'Thiếu parentId' });
+        return;
+    }
+
     const err = validateForm();
     if (err) {
-        await Swal.fire({
-            icon: 'warning',
-            title: 'Thiếu / sai thông tin',
-            text: err
-        });
+        await Swal.fire({ icon: 'warning', title: 'Thiếu / sai thông tin', text: err });
         return;
     }
 
     submitting.value = true;
     try {
-        const emailTrimmed = form.email.trim().toLowerCase();
-        const phoneTrimmed = form.phone.trim();
-
-        // username giống import: lấy phần trước @ của email (đã lowercase)
-        let username = '';
-        if (emailTrimmed) {
-            username = emailTrimmed.split('@')[0];
-        }
-
-        // Nếu admin không nhập mật khẩu → dùng 123456
-        const passwordToSend = form.password && form.password.trim() ? form.password.trim() : '123456';
-
         const payload = {
-            username,
-            password: passwordToSend,
             fullName: form.fullName.trim(),
-            email: emailTrimmed,
-            phone: phoneTrimmed,
+            email: form.email.trim().toLowerCase(),
+            phone: form.phone.trim(),
             dateOfBirth: form.dateOfBirth ? formatDateToIso(form.dateOfBirth) : null,
+
+            // gửi đúng key phổ biến; nếu BE cần key khác bạn nói mình đổi
             gender: form.gender || null,
             occupation: form.occupation || null,
             relationship: form.relationship || null,
             emergencyContact: form.emergencyContact || null,
-            additionalPhone: form.additionalPhone || null
+            additionalPhone: form.additionalPhone || null,
+            address: form.address || null,
+            note: form.note || null
         };
 
-        const res = await createParent(payload);
-        const msg = typeof res === 'string' ? res : res?.message || 'Đăng ký tài khoản phụ huynh thành công!';
+        const res = await updateParent(parentId.value, payload);
+        const msg = typeof res === 'string' ? res : res?.message || 'Cập nhật phụ huynh thành công';
 
-        await Swal.fire({
-            icon: 'success',
-            title: 'Thành công',
-            html: `
-                <div style="text-align:left;font-size:14px;">
-                    <div>${msg}</div>
-                    <br/>
-                    <div><strong>Tài khoản đăng nhập:</strong></div>
-                    <div>Username: <code>${username}</code></div>
-                    <div>Mật khẩu: <code>${passwordToSend}</code></div>
-                </div>
-            `
-        });
-
+        await Swal.fire({ icon: 'success', title: 'Thành công', text: msg });
         emit('saved');
-        closeDialog();
+        visible.value = false;
     } catch (e) {
-        const msg = e?.response?.data?.message || e?.message || 'Không thể tạo phụ huynh, vui lòng thử lại';
-        await Swal.fire({
-            icon: 'error',
-            title: 'Lỗi',
-            text: msg
-        });
+        const msg = e?.response?.data?.message || e?.message || 'Không thể cập nhật phụ huynh';
+        await Swal.fire({ icon: 'error', title: 'Lỗi', text: msg });
     } finally {
         submitting.value = false;
     }
@@ -201,88 +213,92 @@ async function handleSubmit() {
 </script>
 
 <template>
-    <Dialog :visible="modelValue" modal :style="{ width: '640px', maxWidth: '95vw' }" :breakpoints="{ '960px': '95vw', '640px': '100vw' }" @update:visible="(v) => emit('update:modelValue', v)">
+    <Dialog v-model:visible="visible" modal :draggable="false" :style="{ width: '760px', maxWidth: '95vw' }">
         <template #header>
-            <div class="flex items-center gap-2">
-                <span class="text-lg font-semibold text-slate-800">
-                    {{ dialogTitle }}
-                </span>
-                <span v-if="!isCreateMode" class="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600"> Xem thông tin (web hiện chỉ tạo mới, chưa sửa) </span>
+            <div class="flex flex-col gap-1">
+                <div class="text-lg font-semibold text-slate-800">Chỉnh sửa phụ huynh</div>
+                <div class="text-sm text-slate-600">
+                    <span v-if="parentId"
+                        >ID: <b>{{ parentId }}</b></span
+                    >
+                    <span v-if="usernameDisplay" class="ml-3"
+                        >Username: <b>{{ usernameDisplay }}</b></span
+                    >
+                    <span v-if="statusDisplay" class="ml-3"
+                        >Trạng thái: <b>{{ statusDisplay }}</b></span
+                    >
+                </div>
             </div>
         </template>
 
-        <div class="space-y-4">
-            <!-- Họ tên + SĐT -->
+        <div v-if="loadingDetail" class="text-sm text-slate-600">Đang tải thông tin phụ huynh...</div>
+
+        <div v-else class="space-y-4">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="form-label">Họ và tên *</label>
-                    <InputText v-model="form.fullName" class="w-full" :disabled="!isCreateMode" placeholder="VD: Nguyễn Văn A" />
+                    <InputText v-model="form.fullName" class="w-full" />
                 </div>
                 <div>
                     <label class="form-label">Số điện thoại *</label>
-                    <InputText v-model="form.phone" class="w-full" :disabled="!isCreateMode" placeholder="VD: 0912345678" />
+                    <InputText v-model="form.phone" class="w-full" />
                 </div>
             </div>
 
-            <!-- Email + Giới tính -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="form-label">Email *</label>
-                    <InputText v-model="form.email" class="w-full" :disabled="!isCreateMode" placeholder="VD: phuhuynh@example.com" />
-                    <p v-if="isCreateMode" class="text-[11px] text-slate-500 mt-1">Username đăng nhập sẽ được sinh từ phần trước dấu <code>@</code> của email.</p>
+                    <InputText v-model="form.email" class="w-full" />
                 </div>
                 <div>
                     <label class="form-label">Giới tính</label>
-                    <Dropdown v-model="form.gender" :options="genderOptions" optionLabel="label" optionValue="value" class="w-full" :disabled="!isCreateMode" placeholder="Chọn giới tính" showClear />
+                    <Dropdown v-model="form.gender" :options="genderOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn giới tính" showClear />
                 </div>
             </div>
 
-            <!-- Mật khẩu -->
-            <div>
-                <label class="form-label">Mật khẩu (tùy chọn cho admin)</label>
-                <InputText v-model="form.password" type="password" class="w-full" :disabled="!isCreateMode" placeholder="Nếu bỏ trống sẽ dùng mật khẩu mặc định 123456" />
-                <p class="text-[11px] text-slate-500 mt-1">
-                    - Nếu để trống: hệ thống sẽ tạo mật khẩu mặc định
-                    <strong>123456</strong> cho phụ huynh.<br />
-                    - Admin có thể in / gửi thông tin tài khoản (username + mật khẩu) cho phụ huynh, và khuyến khích phụ huynh đổi mật khẩu sau khi đăng nhập.
-                </p>
-            </div>
-
-            <!-- Ngày sinh + Nghề nghiệp -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="form-label">Ngày sinh</label>
-                    <Calendar v-model="form.dateOfBirth" dateFormat="dd/mm/yy" class="w-full" :disabled="!isCreateMode" :showIcon="true" />
+                    <Calendar v-model="form.dateOfBirth" dateFormat="dd/mm/yy" class="w-full" :showIcon="true" />
                 </div>
                 <div>
                     <label class="form-label">Nghề nghiệp</label>
-                    <InputText v-model="form.occupation" class="w-full" :disabled="!isCreateMode" placeholder="VD: Kinh doanh, Nhân viên văn phòng..." />
+                    <InputText v-model="form.occupation" class="w-full" />
                 </div>
             </div>
 
-            <!-- Mối quan hệ + Liên hệ khẩn cấp -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="form-label">Mối quan hệ với bé</label>
-                    <Dropdown v-model="form.relationship" :options="relationshipOptions" class="w-full" optionLabel="label" optionValue="value" :disabled="!isCreateMode" placeholder="Chọn mối quan hệ" showClear />
+                    <Dropdown v-model="form.relationship" :options="relationshipOptions" class="w-full" optionLabel="label" optionValue="value" placeholder="Chọn mối quan hệ" showClear />
                 </div>
                 <div>
                     <label class="form-label">Liên hệ khẩn cấp</label>
-                    <InputText v-model="form.emergencyContact" class="w-full" :disabled="!isCreateMode" placeholder="Tên + SĐT người liên hệ khẩn" />
+                    <InputText v-model="form.emergencyContact" class="w-full" />
                 </div>
             </div>
 
-            <!-- SĐT phụ -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="form-label">Số điện thoại phụ</label>
+                    <InputText v-model="form.additionalPhone" class="w-full" />
+                </div>
+                <div>
+                    <label class="form-label">Địa chỉ</label>
+                    <InputText v-model="form.address" class="w-full" />
+                </div>
+            </div>
+
             <div>
-                <label class="form-label">Số điện thoại phụ</label>
-                <InputText v-model="form.additionalPhone" class="w-full" :disabled="!isCreateMode" placeholder="Số điện thoại khác (nếu có)" />
+                <label class="form-label">Ghi chú</label>
+                <InputText v-model="form.note" class="w-full" />
             </div>
         </div>
 
         <template #footer>
             <div class="flex justify-end gap-2">
-                <Button class="!bg-slate-200 !border-0 !text-slate-700 px-4" label="Đóng" @click="closeDialog" :disabled="submitting" />
-                <Button v-if="isCreateMode" class="!bg-primary !border-0 !text-white px-4" icon="fa-solid fa-floppy-disk mr-2" :label="submitting ? 'Đang lưu...' : 'Lưu phụ huynh'" :disabled="submitting" @click="handleSubmit" />
+                <Button class="!bg-slate-200 !border-0 !text-slate-700 px-4" label="Đóng" :disabled="submitting" @click="visible = false" />
+                <Button class="!bg-primary !border-0 !text-white px-4" icon="fa-solid fa-floppy-disk mr-2" :label="submitting ? 'Đang lưu...' : 'Lưu'" :disabled="submitting" @click="handleSave" />
             </div>
         </template>
     </Dialog>

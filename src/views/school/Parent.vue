@@ -58,7 +58,7 @@ const counts = ref({ total: 0, active: 0, blocked: 0 });
 
 const selection = ref([]);
 const selectAll = ref(false);
-
+const modalMode = ref('create');
 /* =================== TABS =================== */
 const tabs = computed(() => [
     { key: 'all', label: 'Tất cả', count: counts.value.total, icon: 'fa-users' },
@@ -150,19 +150,22 @@ function isSelected(row) {
 }
 
 /* =================== ACTIONS =================== */
-function onCreate() {
-    editing.value = null;
-    showUpsert.value = true;
-}
-
 function onEdit(row) {
-    editing.value = row;
-    showUpsert.value = true;
+  editing.value = row;
+  modalMode.value = 'edit';
+  showUpsert.value = true;
 }
 
 function onView(row) {
-    editing.value = row;
-    showUpsert.value = true;
+  editing.value = row;
+  modalMode.value = 'view';
+  showUpsert.value = true;
+}
+
+function onCreate() {
+  editing.value = null;
+  modalMode.value = 'create';
+  showUpsert.value = true;
 }
 
 async function onAfterUpsert() {
@@ -536,10 +539,10 @@ onMounted(() => load(true));
                     <i class="fa-solid fa-unlock"></i>
                     <span>Mở khóa</span>
                 </button>
-                <button class="btn btn-sm btn-danger" @click="bulkDelete" :disabled="!selection.length">
+                <!-- <button class="btn btn-sm btn-danger" @click="bulkDelete" :disabled="!selection.length">
                     <i class="fa-solid fa-trash"></i>
                     <span>Xóa</span>
-                </button>
+                </button> -->
             </div>
         </div>
 
@@ -674,13 +677,13 @@ onMounted(() => load(true));
                                 >
                                     <i class="fa-solid fa-unlock"></i>
                                 </button>
-                                <button
+                                <!-- <button
                                     class="action-btn danger"
                                     @click="onDelete(row)"
                                     title="Xóa"
                                 >
                                     <i class="fa-solid fa-trash"></i>
-                                </button>
+                                </button> -->
                             </div>
                         </td>
                     </tr>

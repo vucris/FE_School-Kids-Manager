@@ -2,7 +2,9 @@
 import { ref, computed, watch } from 'vue';
 import Dialog from 'primevue/dialog';
 import Button from 'primevue/button';
-import { importStudentsExcel, downloadStudentsImportTemplate } from '@/service/studentService.js';
+
+// ✅ dùng template từ BE + import excel BE
+import { importStudentsExcel, downloadStudentsImportTemplateFromBackend } from '@/service/studentService.js';
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
@@ -70,9 +72,13 @@ function validateAndSet(f) {
     file.value = f;
 }
 
+/** ✅ tải file mẫu đúng từ Backend: GET /students/import-template */
 async function onDownloadTemplate() {
+    errorMsg.value = '';
+    infoMsg.value = '';
     try {
-        await downloadStudentsImportTemplate();
+        await downloadStudentsImportTemplateFromBackend();
+        infoMsg.value = 'Đang tải file mẫu...';
     } catch (e) {
         errorMsg.value = e?.message || 'Không tải được file mẫu';
     }
@@ -93,13 +99,12 @@ async function onUpload() {
             onProgress: (p) => (progress.value = p)
         });
 
-        // res có thể là string hoặc ApiResponse; lấy message thân thiện
+        // importStudentsExcel có thể trả string message
         const msg = typeof res === 'string' ? res : res?.message || 'Nhập học sinh thành công';
 
         infoMsg.value = msg;
-        emit('imported'); // chỉ báo cho màn ngoài reload, không gửi số lượng
+        emit('imported');
 
-        // Đóng popup sau một chút
         setTimeout(() => {
             visible.value = false;
         }, 800);
@@ -133,9 +138,11 @@ async function onUpload() {
             </div>
         </div>
 
+        <!-- ✅ Update hướng dẫn đúng theo BE “mầm non” -->
         <div class="mt-3 text-sm text-slate-700">
-            Thứ tự cột bắt buộc (hàng đầu tiên là tiêu đề):
-            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">username, password, fullName, email, phone, gender, dateOfBirth, address, healthNotes, class_code, phone (phụ huynh)</div>
+            Thứ tự cột trong file Excel (hàng đầu là tiêu đề):
+            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">fullName, phone, gender(NAM/NỮ), dateOfBirth(dd-MM-yyyy), address, healthNotes, classCode, parentPhone</div>
+            <div class="mt-2 text-xs text-slate-500">Gợi ý: Học sinh mầm non có thể để trống <b>phone</b>. Giới tính nhập <b>NAM</b> hoặc <b>NỮ</b>.</div>
         </div>
 
         <div v-if="uploading" class="mt-3 text-sm text-slate-600">
@@ -156,7 +163,7 @@ async function onUpload() {
             <div class="flex items-center justify-between w-full">
                 <Button class="!bg-slate-200 !text-slate-800 !border-0" label="Đóng" :disabled="uploading" @click="visible = false" />
                 <div class="flex items-center gap-2">
-                    <Button class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Tải mẫu Excel Import" @click="onDownloadTemplate" />
+                    <Button class="!bg-green-600 !border-0 !text-white" icon="fa-solid fa-file-arrow-down mr-2" label="Tải mẫu Excel Import" :disabled="uploading" @click="onDownloadTemplate" />
                     <Button class="!bg-primary !border-0 !text-white" icon="fa-solid fa-cloud-arrow-up mr-2" :label="uploading ? 'Đang tải...' : 'Tải lên'" :disabled="uploading" @click="onUpload" />
                 </div>
             </div>

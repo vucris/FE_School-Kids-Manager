@@ -29,25 +29,25 @@ const router = createRouter({
                 {
                     path: 'school/giao-Vien',
                     name: 'TeacherManagement',
-                    component: () => import('@/views/school/Giao-Vien.vue'),
+                    component: () => import('@/views/school/Teacher.vue'),
                     meta: { requiresAuth: true, roles: ['ADMIN'] }
                 },
                 {
                     path: 'school/Hoc-Sinh',
                     name: 'QLHocSinh',
-                    component: () => import('@/views/school/Hoc-Sinh.vue'),
+                    component: () => import('@/views/school/Students.vue'),
                     meta: { requiresAuth: true, roles: ['ADMIN', 'TEACHER'] }
                 },
                 {
                     path: 'school/class',
                     name: 'ClassManagement',
-                    component: () => import('@/views/school/class.vue'),
+                    component: () => import('@/views/school/Class.vue'),
                     meta: { requiresAuth: true, roles: ['ADMIN'] }
                 },
                 {
                     path: 'school/parent',
                     name: 'parentManagement',
-                    component: () => import('@/views/school/phu-Huynh.vue'),
+                    component: () => import('@/views/school/Parent.vue'),
                     meta: { requiresAuth: true, roles: ['ADMIN', 'TEACHER'] }
                 },
                 {
@@ -108,6 +108,12 @@ const router = createRouter({
                     path: 'school/report/attendance',
                     name: 'ReportAttendance',
                     component: () => import('@/views/school/report/ReportAttendance.vue'),
+                    meta: { requiresAuth: true, roles: ['ADMIN', 'TEACHER'] }
+                },
+                  {
+                    path: 'school/report/student',
+                    name: 'ReportStudent',
+                    component: () => import('@/views/school/report/ReportStudent.vue'),
                     meta: { requiresAuth: true, roles: ['ADMIN', 'TEACHER'] }
                 },
                 {

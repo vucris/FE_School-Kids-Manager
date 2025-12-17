@@ -71,7 +71,7 @@ async function handleConfirmChange() {
 
 /** Quay về màn login */
 function goBackToLogin() {
-    router.push('/login'); // chỉnh lại path nếu anh đặt khác
+    router.push('/auth/login'); // chỉnh lại path nếu anh đặt khác
 }
 </script>
 
@@ -82,12 +82,8 @@ function goBackToLogin() {
                 <div class="title-wrap">
                     <h2 v-if="step === 1">Quên mật khẩu</h2>
                     <h2 v-else>Đặt lại mật khẩu</h2>
-                    <p v-if="step === 1" class="subtitle">
-                        Nhập email của bạn, hệ thống sẽ gửi mã OTP để đặt lại mật khẩu.
-                    </p>
-                    <p v-else class="subtitle">
-                        Kiểm tra email để lấy mã OTP, sau đó nhập bên dưới cùng mật khẩu mới.
-                    </p>
+                    <p v-if="step === 1" class="subtitle">Nhập email của bạn, hệ thống sẽ gửi mã OTP để đặt lại mật khẩu.</p>
+                    <p v-else class="subtitle">Kiểm tra email để lấy mã OTP, sau đó nhập bên dưới cùng mật khẩu mới.</p>
                 </div>
             </template>
 
@@ -95,59 +91,26 @@ function goBackToLogin() {
                 <div class="form-wrapper">
                     <!-- Email -->
                     <div class="form-group">
-                        <label class="form-label">
-                            Email đăng ký <span class="required">*</span>
-                        </label>
-                        <InputText
-                            v-model="email"
-                            placeholder="ví dụ: phuhuynh@gmail.com"
-                            class="w-full"
-                            type="email"
-                            :disabled="step === 2"
-                        />
+                        <label class="form-label"> Email đăng ký <span class="required">*</span> </label>
+                        <InputText v-model="email" placeholder="ví dụ: phuhuynh@gmail.com" class="w-full" type="email" :disabled="step === 2" />
                     </div>
 
                     <!-- Bước 2: Nhập OTP + mật khẩu -->
                     <template v-if="step === 2">
                         <div class="form-group">
-                            <label class="form-label">
-                                Mã OTP <span class="required">*</span>
-                            </label>
-                            <InputText
-                                v-model="code"
-                                maxlength="6"
-                                placeholder="Nhập mã OTP gồm 6 ký tự"
-                                class="w-full"
-                            />
+                            <label class="form-label"> Mã OTP <span class="required">*</span> </label>
+                            <InputText v-model="code" maxlength="6" placeholder="Nhập mã OTP gồm 6 ký tự" class="w-full" />
                             <small class="hint">Mã OTP có hiệu lực 10 phút.</small>
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label">
-                                Mật khẩu mới <span class="required">*</span>
-                            </label>
-                            <Password
-                                v-model="newPassword"
-                                toggleMask
-                                class="w-full"
-                                inputClass="w-full"
-                                placeholder="Nhập mật khẩu mới"
-                                :feedback="false"
-                            />
+                            <label class="form-label"> Mật khẩu mới <span class="required">*</span> </label>
+                            <Password v-model="newPassword" toggleMask class="w-full" inputClass="w-full" placeholder="Nhập mật khẩu mới" :feedback="false" />
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label">
-                                Nhập lại mật khẩu mới <span class="required">*</span>
-                            </label>
-                            <Password
-                                v-model="confirmPassword"
-                                toggleMask
-                                class="w-full"
-                                inputClass="w-full"
-                                placeholder="Nhập lại mật khẩu mới"
-                                :feedback="false"
-                            />
+                            <label class="form-label"> Nhập lại mật khẩu mới <span class="required">*</span> </label>
+                            <Password v-model="confirmPassword" toggleMask class="w-full" inputClass="w-full" placeholder="Nhập lại mật khẩu mới" :feedback="false" />
                         </div>
                     </template>
                 </div>
@@ -155,28 +118,11 @@ function goBackToLogin() {
 
             <template #footer>
                 <div class="footer-row">
-                    <Button
-                        label="Quay lại đăng nhập"
-                        class="p-button-text"
-                        icon="pi pi-arrow-left"
-                        @click="goBackToLogin"
-                    />
+                    <Button label="Quay lại đăng nhập" class="p-button-text" icon="pi pi-arrow-left" @click="goBackToLogin" />
 
                     <div class="footer-actions">
-                        <Button
-                            v-if="step === 1"
-                            label="Gửi mã OTP"
-                            icon="pi pi-send"
-                            :loading="loadingSend"
-                            @click="handleSendOtp"
-                        />
-                        <Button
-                            v-else
-                            label="Xác nhận đổi mật khẩu"
-                            icon="pi pi-check"
-                            :loading="loadingConfirm"
-                            @click="handleConfirmChange"
-                        />
+                        <Button v-if="step === 1" label="Gửi mã OTP" icon="pi pi-send" :loading="loadingSend" @click="handleSendOtp" />
+                        <Button v-else label="Xác nhận đổi mật khẩu" icon="pi pi-check" :loading="loadingConfirm" @click="handleConfirmChange" />
                     </div>
                 </div>
             </template>

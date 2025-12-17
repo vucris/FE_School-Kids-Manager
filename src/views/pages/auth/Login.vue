@@ -45,23 +45,39 @@ async function onSubmit() {
 
         await nextTick();
 
+        // Lấy role và chuẩn hóa về UPPERCASE
+        const rawRole = data.role || data.user?.role;
+        const role = typeof rawRole === 'string' ? rawRole.toUpperCase() : rawRole;
+
+        // ❌ CHẶN PHỤ HUYNH ĐĂNG NHẬP
+        if (role === 'PARENT' || role === 'ROLE_PARENT') {
+            errorMsg.value = 'Sai tài khoản hoặc mật khẩu.';
+            // Nếu store có hàm logout thì gọi để xoá token/session
+            if (typeof auth.logout === 'function') {
+                await auth.logout();
+            }
+            loading.value = false;
+            return;
+        }
+
         const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : null;
 
         if (redirect) {
             await router.replace(redirect);
         } else {
-            const role = data.role || data.user?.role;
-
+            // Điều hướng theo role (không còn PARENT vì đã chặn ở trên)
             if (role === 'TEACHER' || role === 'ROLE_TEACHER') {
-                await router.replace({ name: 'AttendanceBoard' });
-            } else if (role === 'PARENT' || role === 'ROLE_PARENT') {
-                await router.replace({ name: 'TrangChu' });
+                await router.replace('/school/Trang-Chu');
+            } else if (role === 'ADMIN' || role === 'ROLE_ADMIN') {
+                await router.replace('/school/Trang-Chu');
             } else {
                 await router.replace({ name: 'dashboard' });
             }
         }
     } catch (err) {
-        errorMsg.value = err?.response?.data?.message || 'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.';
+        errorMsg.value =
+            err?.response?.data?.message ||
+            'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.';
     } finally {
         loading.value = false;
     }
@@ -71,6 +87,8 @@ function togglePassword() {
     showPassword.value = !showPassword.value;
 }
 </script>
+
+
 
 <template>
     <FloatingConfigurator />
@@ -193,13 +211,14 @@ function togglePassword() {
 
 /* ===== Card ===== */
 .login-card {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(20px);
+    /* nền trắng 100% thay vì kính mờ */
+    background: #ffffff;
+    backdrop-filter: none; /* bỏ blur nếu muốn phẳng hoàn toàn */
     border-radius: 24px;
     padding: 2.5rem 2rem;
     box-shadow:
-        0 25px 50px -12px rgba(0, 0, 0, 0.25),
-        0 0 0 1px rgba(255, 255, 255, 0.1);
+        0 25px 50px -12px rgba(15, 23, 42, 0.25),
+        0 0 0 1px rgba(15, 23, 42, 0.03); /* viền nhẹ đẹp hơn */
     position: relative;
     overflow: hidden;
 }
@@ -304,7 +323,7 @@ function togglePassword() {
     border-radius: 12px;
     font-size: 0.9375rem;
     color: #1e293b;
-    background: #f8fafc;
+    background: #ffffff; /* luôn trắng */
     transition: all 0.2s;
     outline: none;
 }
@@ -317,10 +336,6 @@ function togglePassword() {
     border-color: #6366f1;
     background: white;
     box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
-}
-
-.input-group.filled input {
-    background: white;
 }
 
 /* Password wrapper */

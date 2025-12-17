@@ -344,6 +344,48 @@ export async function fetchOverdueFees() {
     }
 }
 
+/**
+ * ⭐ Gửi thông báo học phí trễ hạn cho 1 lớp (theo BE: /fees/notify-overdue)
+ * Body: { classId, customMessage }
+ */
+export async function sendFeeOverdueNotificationsToClass({ classId, customMessage }) {
+    if (!classId) throw new Error('Thiếu classId');
+    const url = withApiV1('/fees/notify-overdue');
+    try {
+        const res = await http.post(
+            url,
+            {
+                classId,
+                customMessage: customMessage || null
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json'
+                }
+            }
+        );
+        // Ở đây ta cần cả message + data từ ApiResponse, nên trả về res.data luôn
+        return res.data; // { status, message, data }
+    } catch (e) {
+        throw new Error(getErr(e, 'Gửi thông báo học phí trễ hạn thất bại'));
+    }
+}
+
+/**
+ * (Tuỳ chọn) Gửi thông báo học phí trễ hạn toàn hệ thống
+ * POST /fees/send-overdue-notifications
+ */
+export async function sendGlobalOverdueFeeNotifications() {
+    const url = withApiV1('/fees/send-overdue-notifications');
+    try {
+        const res = await http.post(url);
+        return res.data;
+    } catch (e) {
+        throw new Error(getErr(e, 'Gửi thông báo học phí trễ hạn toàn trường thất bại'));
+    }
+}
+
 /* ============================================================================
  *                              EXCEL EXPORT
  * ==========================================================================*/
@@ -468,5 +510,7 @@ export default {
     verifyFeePayment,
     fetchFeesWaitingVerification,
     fetchMyFees,
-    fetchOverdueFees
+    fetchOverdueFees,
+    sendFeeOverdueNotificationsToClass,
+    sendGlobalOverdueFeeNotifications
 };

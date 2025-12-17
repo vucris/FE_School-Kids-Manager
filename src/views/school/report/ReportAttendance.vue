@@ -14,12 +14,38 @@ import Swal from 'sweetalert2';
 import { fetchAttendanceList, fetchAttendanceSummary } from '@/service/attendanceService.js';
 import { fetchClassOptions } from '@/service/classService.js';
 
+/* ======= ENUM TRẠNG THÁI – CHUẨN VỚI MÀN ĐIỂM DANH ======= */
+
+const STATUS = {
+    PRESENT: { key: 'PRESENT', label: 'Đi học', class: 'bg-emerald-500 text-white' },
+    ABSENT: { key: 'ABSENT', label: 'Vắng', class: 'bg-rose-500 text-white' },
+    LATE: { key: 'LATE', label: 'Đi muộn', class: 'bg-amber-500 text-white' },
+    EARLY_LEAVE: { key: 'EARLY_LEAVE', label: 'Về sớm', class: 'bg-sky-500 text-white' },
+    UNDEFINED: { key: 'UNDEFINED', label: 'Chưa xác định', class: 'bg-slate-300 text-slate-800' }
+};
+
+const statusFilterOptions = computed(() => [
+    { label: 'Tất cả', value: null },
+    ...Object.values(STATUS).map((s) => ({
+        label: s.label,
+        value: s.key
+    }))
+]);
+
+/* checkout status – dùng lại logic màn Điểm danh về */
+const checkOutStatusView = {
+    PRESENT: { text: 'Đã về', class: 'bg-emerald-500 text-white' },
+    ABSENT: { text: 'Không đến', class: 'bg-rose-500 text-white' },
+    EARLY_LEAVE: { text: 'Về sớm', class: 'bg-sky-500 text-white' },
+    UNDEFINED: { text: 'Chưa điểm danh về', class: 'bg-slate-300 text-slate-800' }
+};
+
 /* ======= STATE ======= */
 
 const classes = ref([]); // [{ id, name }]
 const selectedClass = ref(null);
 const selectedDate = ref(new Date());
-const statusFilter = ref(null); // PRESENT / ABSENT / LATE / EARLY_LEAVE / UNDEFINED
+const statusFilter = ref(null); // PRESENT / ABSENT / LATE / EARLY_LEAVE / UNDEFINED / null
 const keyword = ref(''); // tên học sinh
 
 const list = ref([]); // AttendanceListItemResponse[]
@@ -29,23 +55,6 @@ const loadingInit = ref(false);
 const loadingList = ref(false);
 const loadingSummary = ref(false);
 const errorMessage = ref('');
-
-/* Trạng thái hiển thị UI */
-const statusView = {
-    PRESENT: { text: 'Đi học', class: 'bg-emerald-500 text-white' },
-    ABSENT: { text: 'Nghỉ', class: 'bg-rose-500 text-white' },
-    LATE: { text: 'Đi học trễ', class: 'bg-amber-500 text-white' },
-    EARLY_LEAVE: { text: 'Về sớm', class: 'bg-sky-500 text-white' },
-    UNDEFINED: { text: 'Chưa điểm danh', class: 'bg-slate-300 text-slate-800' }
-};
-
-/* checkout status dùng lại map trên cho đơn giản */
-const checkOutStatusView = {
-    PRESENT: { text: 'Đã về', class: 'bg-emerald-500 text-white' },
-    ABSENT: { text: 'Không đến', class: 'bg-rose-500 text-white' },
-    EARLY_LEAVE: { text: 'Về sớm', class: 'bg-sky-500 text-white' },
-    UNDEFINED: { text: 'Chưa điểm danh về', class: 'bg-slate-300 text-slate-800' }
-};
 
 /* Toast */
 const swalToast = Swal.mixin({
@@ -63,7 +72,7 @@ const filteredList = computed(() => {
     let arr = [...list.value];
 
     if (statusFilter.value) {
-        arr = arr.filter((i) => i.status === statusFilter.value);
+        arr = arr.filter((i) => (i.status || 'UNDEFINED') === statusFilter.value);
     }
 
     if (kw) {
@@ -75,7 +84,6 @@ const filteredList = computed(() => {
 
 const overview = computed(() => {
     if (!summary.value) return null;
-
     return {
         className: summary.value.className,
         date: summary.value.date,
@@ -90,12 +98,12 @@ const overview = computed(() => {
     };
 });
 
-/* Chart Data cho Overview */
+/* Chart Data tổng quan */
 const chartData = computed(() => {
     if (!summary.value) return null;
 
-    const data = {
-        labels: ['Đi học', 'Nghỉ', 'Đi trễ', 'Về sớm', 'Chưa điểm danh'],
+    return {
+        labels: ['Đi học', 'Nghỉ', 'Đi muộn', 'Về sớm', 'Chưa xác định'],
         datasets: [
             {
                 data: [
@@ -105,25 +113,11 @@ const chartData = computed(() => {
                     summary.value.earlyLeaveCount || 0,
                     summary.value.undefinedCount || 0
                 ],
-                backgroundColor: [
-                    '#10b981', // emerald
-                    '#ef4444', // rose
-                    '#f59e0b', // amber
-                    '#0ea5e9', // sky
-                    '#64748b'  // slate
-                ],
-                hoverBackgroundColor: [
-                    '#059669',
-                    '#dc2626',
-                    '#d97706',
-                    '#0284c7',
-                    '#475569'
-                ]
+                backgroundColor: ['#10b981', '#ef4444', '#f59e0b', '#0ea5e9', '#64748b'],
+                hoverBackgroundColor: ['#059669', '#dc2626', '#d97706', '#0284c7', '#475569']
             }
         ]
     };
-
-    return data;
 });
 
 const chartOptions = computed(() => ({
@@ -170,6 +164,28 @@ function formatTime(value) {
     return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * CHUẨN HÓA trạng thái đến cho hiển thị – giống màn Điểm danh:
+ * - Vắng + hasPermission = "Vắng có phép"
+ * - Vắng + !hasPermission = "Vắng không phép"
+ * - Các trạng thái khác giữ nguyên label trong STATUS
+ */
+function getCheckInStatusMeta(item) {
+    const key = (item?.status || 'UNDEFINED');
+    const base = STATUS[key] || STATUS.UNDEFINED;
+    let text = base.label;
+
+    if (key === 'ABSENT') {
+        text = item?.hasPermission ? 'Nghỉ có phép' : 'Nghỉ không phép';
+    }
+
+    return {
+        key,
+        text,
+        class: base.class
+    };
+}
+
 /* ======= LOAD DATA ======= */
 
 async function loadClasses() {
@@ -198,10 +214,17 @@ async function loadAttendance() {
         const data = await fetchAttendanceList({
             classId: selectedClass.value.id,
             date: selectedDate.value,
-            status: null, // statusFilter xử lý ở FE
+            status: null, // filter status xử lý ở FE
             keyword: null
         });
-        list.value = data || [];
+
+        // CHUẨN HÓA dữ liệu giống màn Điểm danh
+        list.value = (data || []).map((i) => ({
+            ...i,
+            status: i.status || 'UNDEFINED',
+            hasPermission: i.hasPermission ?? false,
+            checkOutStatus: i.checkOutStatus || 'UNDEFINED'
+        }));
     } catch (e) {
         console.error(e);
         errorMessage.value = e.message || 'Không thể tải danh sách điểm danh';
@@ -257,16 +280,21 @@ watch([selectedClass, selectedDate], () => {
 
 onMounted(async () => {
     await loadClasses();
-    await reloadAll(false);
+    // Khi selectedClass được set lần đầu, watch sẽ tự reloadAll
 });
 </script>
 
 <template>
     <div class="attendance-report px-4 md:px-6 lg:px-10 py-6 space-y-6 relative">
         <!-- Loading Overlay -->
-        <div v-if="loadingInit" class="fixed inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50">
+        <div
+            v-if="loadingInit"
+            class="fixed inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50"
+        >
             <div class="text-center">
-                <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4"></div>
+                <div
+                    class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4"
+                ></div>
                 <p class="text-slate-600">Đang tải báo cáo điểm danh...</p>
             </div>
         </div>
@@ -279,7 +307,9 @@ onMounted(async () => {
                 </div>
                 <div>
                     <h1 class="text-3xl font-bold tracking-tight text-slate-800">Báo cáo điểm danh</h1>
-                    <p class="text-slate-500 text-sm mt-1">Xem đầy đủ thông tin điểm danh đến / về theo từng lớp và ngày</p>
+                    <p class="text-slate-500 text-sm mt-1">
+                        Xem đầy đủ thông tin điểm danh đến / về theo từng lớp và ngày
+                    </p>
                 </div>
             </div>
 
@@ -293,7 +323,10 @@ onMounted(async () => {
         </div>
 
         <!-- Error Message -->
-        <div v-if="errorMessage" class="animate-slide-down px-4 py-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200">
+        <div
+            v-if="errorMessage"
+            class="animate-slide-down px-4 py-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200"
+        >
             <i class="fa-solid fa-exclamation-triangle mr-2"></i>
             {{ errorMessage }}
         </div>
@@ -327,14 +360,7 @@ onMounted(async () => {
                         <label class="label">Trạng thái đến</label>
                         <Dropdown
                             v-model="statusFilter"
-                            :options="[
-                                { label: 'Tất cả', value: null },
-                                { label: 'Đi học', value: 'PRESENT' },
-                                { label: 'Nghỉ', value: 'ABSENT' },
-                                { label: 'Đi học trễ', value: 'LATE' },
-                                { label: 'Về sớm', value: 'EARLY_LEAVE' },
-                                { label: 'Chưa điểm danh', value: 'UNDEFINED' }
-                            ]"
+                            :options="statusFilterOptions"
                             optionLabel="label"
                             optionValue="value"
                             placeholder="Tất cả"
@@ -354,14 +380,20 @@ onMounted(async () => {
         </Card>
 
         <!-- Overview với Chart -->
-        <div v-if="summary" class="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in" style="animation-delay: 0.2s">
+        <div
+            v-if="summary"
+            class="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in"
+            style="animation-delay: 0.2s"
+        >
             <!-- Stats Cards -->
             <div class="lg:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Card class="stat-card bg-emerald-50 border-emerald-200">
                     <template #content>
                         <div class="text-center">
                             <i class="fa-solid fa-check-circle text-2xl text-emerald-600 mb-2"></i>
-                            <div class="text-2xl font-bold text-emerald-800">{{ summary.presentCount }}</div>
+                            <div class="text-2xl font-bold text-emerald-800">
+                                {{ summary.presentCount }}
+                            </div>
                             <div class="text-sm text-emerald-600">Đi học</div>
                         </div>
                     </template>
@@ -371,7 +403,9 @@ onMounted(async () => {
                     <template #content>
                         <div class="text-center">
                             <i class="fa-solid fa-times-circle text-2xl text-rose-600 mb-2"></i>
-                            <div class="text-2xl font-bold text-rose-800">{{ summary.absentCount }}</div>
+                            <div class="text-2xl font-bold text-rose-800">
+                                {{ summary.absentCount }}
+                            </div>
                             <div class="text-sm text-rose-600">Nghỉ</div>
                         </div>
                     </template>
@@ -381,8 +415,10 @@ onMounted(async () => {
                     <template #content>
                         <div class="text-center">
                             <i class="fa-solid fa-clock text-2xl text-amber-600 mb-2"></i>
-                            <div class="text-2xl font-bold text-amber-800">{{ summary.lateCount }}</div>
-                            <div class="text-sm text-amber-600">Đi trễ</div>
+                            <div class="text-2xl font-bold text-amber-800">
+                                {{ summary.lateCount }}
+                            </div>
+                            <div class="text-sm text-amber-600">Đi muộn</div>
                         </div>
                     </template>
                 </Card>
@@ -391,7 +427,9 @@ onMounted(async () => {
                     <template #content>
                         <div class="text-center">
                             <i class="fa-solid fa-sign-out-alt text-2xl text-sky-600 mb-2"></i>
-                            <div class="text-2xl font-bold text-sky-800">{{ summary.earlyLeaveCount }}</div>
+                            <div class="text-2xl font-bold text-sky-800">
+                                {{ summary.earlyLeaveCount }}
+                            </div>
                             <div class="text-sm text-sky-600">Về sớm</div>
                         </div>
                     </template>
@@ -401,7 +439,9 @@ onMounted(async () => {
             <!-- Chart -->
             <Card class="card-soft ring-1 ring-slate-100 shadow-lg">
                 <template #content>
-                    <h3 class="text-lg font-semibold text-slate-800 mb-4 text-center">Tỷ lệ điểm danh</h3>
+                    <h3 class="text-lg font-semibold text-slate-800 mb-4 text-center">
+                        Tỷ lệ điểm danh
+                    </h3>
                     <div class="h-64">
                         <Chart type="doughnut" :data="chartData" :options="chartOptions" />
                     </div>
@@ -410,7 +450,11 @@ onMounted(async () => {
         </div>
 
         <!-- Summary Text -->
-        <Card v-if="summary" class="card-soft ring-1 ring-slate-100 shadow-lg animate-fade-in" style="animation-delay: 0.3s">
+        <Card
+            v-if="summary"
+            class="card-soft ring-1 ring-slate-100 shadow-lg animate-fade-in"
+            style="animation-delay: 0.3s"
+        >
             <template #content>
                 <div class="flex flex-wrap items-center gap-4 text-sm text-slate-700">
                     <div class="flex-1 min-w-[200px]">
@@ -418,19 +462,25 @@ onMounted(async () => {
                             Lớp {{ summary.className }} • {{ formatDate(summary.date) }}
                         </div>
                         <div class="text-sm text-slate-500 mt-1">
-                            Tổng số học sinh: <span class="font-bold text-slate-800">{{ summary.totalStudents }}</span>
+                            Tổng số học sinh:
+                            <span class="font-bold text-slate-800">
+                                {{ summary.totalStudents }}
+                            </span>
                         </div>
                     </div>
 
                     <div class="flex flex-wrap gap-3">
                         <div class="stat-pill bg-slate-50 text-slate-700">
-                            Chưa điểm danh: <span class="font-bold">{{ summary.undefinedCount }}</span>
+                            Chưa điểm danh:
+                            <span class="font-bold">{{ summary.undefinedCount }}</span>
                         </div>
                         <div class="stat-pill bg-emerald-50 text-emerald-700">
-                            Đã điểm danh về: <span class="font-bold">{{ summary.checkedOutCount }}</span>
+                            Đã điểm danh về:
+                            <span class="font-bold">{{ summary.checkedOutCount }}</span>
                         </div>
                         <div class="stat-pill bg-slate-50 text-slate-700">
-                            Chưa điểm danh về: <span class="font-bold">{{ summary.notCheckedOutCount }}</span>
+                            Chưa điểm danh về:
+                            <span class="font-bold">{{ summary.notCheckedOutCount }}</span>
                         </div>
                     </div>
                 </div>
@@ -438,22 +488,33 @@ onMounted(async () => {
         </Card>
 
         <!-- Data Table -->
-        <div class="overflow-auto rounded-2xl ring-1 ring-slate-200 bg-white shadow-lg relative animate-fade-in" style="animation-delay: 0.4s">
+        <div
+            class="overflow-auto rounded-2xl ring-1 ring-slate-200 bg-white shadow-lg relative animate-fade-in"
+            style="animation-delay: 0.4s"
+        >
             <!-- Loading Overlay -->
-            <div v-if="loadingList" class="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
+            <div
+                v-if="loadingList"
+                class="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10"
+            >
                 <div class="text-center">
-                    <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent mb-2"></div>
+                    <div
+                        class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent mb-2"
+                    ></div>
                     <p class="text-slate-600 text-sm">Đang tải danh sách...</p>
                 </div>
             </div>
 
             <table class="min-w-full">
-                <thead class="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200">
+                <thead
+                    class="bg-gradient-to-r from-slate-50 to-slate-100 border-b-2 border-slate-200"
+                >
                     <tr>
                         <th class="th w-12">#</th>
                         <th class="th min-w-[220px]">Học sinh</th>
                         <th class="th min-w-[160px]">Lớp</th>
                         <th class="th min-w-[140px] text-center">Trạng thái đến</th>
+                        <th class="th min-w-[120px] text-center">Có phép</th>
                         <th class="th min-w-[160px]">Thời gian đến</th>
                         <th class="th min-w-[160px]">Người điểm danh đến</th>
                         <th class="th min-w-[200px]">Ghi chú đến</th>
@@ -464,52 +525,112 @@ onMounted(async () => {
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="(item, idx) in filteredList" :key="item.studentId" class="hover:bg-slate-50/50 border-b border-slate-100 transition-colors duration-200">
+                    <tr
+                        v-for="(item, idx) in filteredList"
+                        :key="item.studentId"
+                        class="hover:bg-slate-50/50 border-b border-slate-100 transition-colors duration-200"
+                    >
                         <td class="td text-slate-500 font-medium">
                             {{ idx + 1 }}
                         </td>
+
                         <td class="td">
                             <div class="font-semibold text-slate-900">
                                 {{ item.studentName }}
                             </div>
                         </td>
+
                         <td class="td text-slate-700">
                             {{ item.className }}
-                            <span class="text-xs text-slate-400 ml-1">({{ item.classCode }})</span>
-                        </td>
-                        <td class="td text-center">
-                            <span class="status-badge" :class="statusView[item.status]?.class || 'bg-slate-300 text-slate-800'">
-                                {{ statusView[item.status]?.text || item.status || 'Không xác định' }}
+                            <span class="text-xs text-slate-400 ml-1">
+                                ({{ item.classCode }})
                             </span>
                         </td>
+
+                        <!-- Trạng thái đến (chuẩn với màn Điểm danh) -->
+                        <td class="td text-center">
+                            <span
+                                class="status-badge"
+                                :class="getCheckInStatusMeta(item).class"
+                            >
+                                {{ getCheckInStatusMeta(item).text }}
+                            </span>
+                        </td>
+
+                        <!-- Có phép -->
+                        <td class="td text-center">
+                            <span
+                                v-if="(item.status || 'UNDEFINED') === 'ABSENT'"
+                                class="perm-badge"
+                                :class="item.hasPermission ? 'perm-yes' : 'perm-no'"
+                            >
+                                {{ item.hasPermission ? 'Có phép' : 'Không phép' }}
+                            </span>
+                            <span v-else class="text-xs text-slate-400 italic">—</span>
+                        </td>
+
+                        <!-- Thời gian đến -->
                         <td class="td">
                             <div v-if="item.checkTime" class="text-slate-900">
-                                <div class="font-medium">{{ formatTime(item.checkTime) }}</div>
-                                <div class="text-xs text-slate-500">{{ formatDate(item.checkTime) }}</div>
+                                <div class="font-medium">
+                                    {{ formatTime(item.checkTime) }}
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{ formatDate(item.checkTime) }}
+                                </div>
                             </div>
-                            <span v-else class="text-slate-400 text-sm italic">Chưa có</span>
+                            <span v-else class="text-slate-400 text-sm italic">
+                                Chưa có
+                            </span>
                         </td>
+
+                        <!-- Người điểm danh đến -->
                         <td class="td text-slate-700">
                             {{ item.checkedBy || '—' }}
                         </td>
+
+                        <!-- Ghi chú đến -->
                         <td class="td text-slate-700">
                             {{ item.note || '—' }}
                         </td>
+
+                        <!-- Trạng thái về -->
                         <td class="td text-center">
-                            <span class="status-badge" :class="checkOutStatusView[item.checkOutStatus]?.class || 'bg-slate-300 text-slate-800'">
-                                {{ checkOutStatusView[item.checkOutStatus]?.text || item.checkOutStatus || 'Không xác định' }}
+                            <span
+                                class="status-badge"
+                                :class="
+                                    (checkOutStatusView[item.checkOutStatus] ||
+                                        checkOutStatusView.UNDEFINED).class
+                                "
+                            >
+                                {{
+                                    (checkOutStatusView[item.checkOutStatus] ||
+                                        checkOutStatusView.UNDEFINED).text
+                                }}
                             </span>
                         </td>
+
+                        <!-- Thời gian về -->
                         <td class="td">
                             <div v-if="item.checkOutTime" class="text-slate-900">
-                                <div class="font-medium">{{ formatTime(item.checkOutTime) }}</div>
-                                <div class="text-xs text-slate-500">{{ formatDate(item.checkOutTime) }}</div>
+                                <div class="font-medium">
+                                    {{ formatTime(item.checkOutTime) }}
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{ formatDate(item.checkOutTime) }}
+                                </div>
                             </div>
-                            <span v-else class="text-slate-400 text-sm italic">Chưa có</span>
+                            <span v-else class="text-slate-400 text-sm italic">
+                                Chưa có
+                            </span>
                         </td>
+
+                        <!-- Người điểm danh về -->
                         <td class="td text-slate-700">
                             {{ item.checkOutBy || '—' }}
                         </td>
+
+                        <!-- Ghi chú về -->
                         <td class="td text-slate-700">
                             {{ item.checkOutNote || '—' }}
                         </td>
@@ -517,11 +638,15 @@ onMounted(async () => {
 
                     <!-- Empty State -->
                     <tr v-if="!loadingList && !filteredList.length">
-                        <td colspan="11" class="td text-center py-12">
+                        <td colspan="12" class="td text-center py-12">
                             <div class="text-slate-400">
                                 <i class="fa-solid fa-inbox text-4xl mb-4 block"></i>
-                                <p class="text-lg font-medium">Không có dữ liệu điểm danh</p>
-                                <p class="text-sm">Thử thay đổi bộ lọc hoặc chọn ngày khác</p>
+                                <p class="text-lg font-medium">
+                                    Không có dữ liệu điểm danh
+                                </p>
+                                <p class="text-sm">
+                                    Thử thay đổi bộ lọc hoặc chọn ngày khác
+                                </p>
                             </div>
                         </td>
                     </tr>
@@ -539,13 +664,25 @@ onMounted(async () => {
 
 /* Animations */
 @keyframes fade-in {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 @keyframes slide-down {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .animate-fade-in {
@@ -625,7 +762,29 @@ onMounted(async () => {
     font-weight: 600;
     border-radius: 20px;
     white-space: nowrap;
-    min-width: 100px;
+    min-width: 110px;
+}
+
+/* Badge Có phép */
+.perm-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.perm-yes {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.perm-no {
+    background: #fee2e2;
+    color: #b91c1c;
 }
 
 .stat-pill {
@@ -643,38 +802,91 @@ onMounted(async () => {
 }
 
 /* Color Classes */
-.bg-emerald-50 { background-color: #ecfdf5; }
-.bg-rose-50 { background-color: #fef2f2; }
-.bg-amber-50 { background-color: #fffbeb; }
-.bg-sky-50 { background-color: #f0f9ff; }
-.bg-slate-50 { background-color: #f8fafc; }
+.bg-emerald-50 {
+    background-color: #ecfdf5;
+}
+.bg-rose-50 {
+    background-color: #fef2f2;
+}
+.bg-amber-50 {
+    background-color: #fffbeb;
+}
+.bg-sky-50 {
+    background-color: #f0f9ff;
+}
+.bg-slate-50 {
+    background-color: #f8fafc;
+}
 
-.text-emerald-600 { color: #059669; }
-.text-emerald-700 { color: #047857; }
-.text-emerald-800 { color: #065f46; }
-.text-rose-600 { color: #dc2626; }
-.text-rose-700 { color: #b91c1c; }
-.text-rose-800 { color: #991b1b; }
-.text-amber-600 { color: #d97706; }
-.text-amber-700 { color: #b45309; }
-.text-amber-800 { color: #92400e; }
-.text-sky-600 { color: #0284c7; }
-.text-sky-700 { color: #0369a1; }
-.text-sky-800 { color: #075985; }
-.text-slate-500 { color: #64748b; }
-.text-slate-600 { color: #475569; }
-.text-slate-700 { color: #334155; }
-.text-slate-800 { color: #1e293b; }
-.text-slate-900 { color: #0f172a; }
+.text-emerald-600 {
+    color: #059669;
+}
+.text-emerald-700 {
+    color: #047857;
+}
+.text-emerald-800 {
+    color: #065f46;
+}
+.text-rose-600 {
+    color: #dc2626;
+}
+.text-rose-700 {
+    color: #b91c1c;
+}
+.text-rose-800 {
+    color: #991b1b;
+}
+.text-amber-600 {
+    color: #d97706;
+}
+.text-amber-700 {
+    color: #b45309;
+}
+.text-amber-800 {
+    color: #92400e;
+}
+.text-sky-600 {
+    color: #0284c7;
+}
+.text-sky-700 {
+    color: #0369a1;
+}
+.text-sky-800 {
+    color: #075985;
+}
+.text-slate-500 {
+    color: #64748b;
+}
+.text-slate-600 {
+    color: #475569;
+}
+.text-slate-700 {
+    color: #334155;
+}
+.text-slate-800 {
+    color: #1e293b;
+}
+.text-slate-900 {
+    color: #0f172a;
+}
 
-.border-emerald-200 { border-color: #a7f3d0; }
-.border-rose-200 { border-color: #fecaca; }
-.border-amber-200 { border-color: #fde68a; }
-.border-sky-200 { border-color: #bae6fd; }
+.border-emerald-200 {
+    border-color: #a7f3d0;
+}
+.border-rose-200 {
+    border-color: #fecaca;
+}
+.border-amber-200 {
+    border-color: #fde68a;
+}
+.border-sky-200 {
+    border-color: #bae6fd;
+}
 
 /* Responsive */
 @media (max-width: 768px) {
-    .th, .td {
+    .th,
+    .td {
         padding: 8px 6px;
         font-size: 12px;
     }

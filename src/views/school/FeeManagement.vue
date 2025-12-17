@@ -15,7 +15,20 @@ import Swal from 'sweetalert2';
 
 import { fetchClassOptions } from '@/service/classService.js';
 import { fetchStudentsByClass } from '@/service/studentService.js';
-import { fetchFeesByClassAndSemesterYear, fetchFeeSummary, fetchAvailableYears, createBulkFees, exportFeesToExcel, payFee, fetchFeeDetail, deleteFee, updateFee, updateOverdueFees } from '@/service/fee.js';
+
+import {
+    fetchFeesByClassAndSemesterYear,
+    fetchFeeSummary,
+    fetchAvailableYears,
+    createBulkFees,
+    exportFeesToExcel,
+    payFee,
+    fetchFeeDetail,
+    deleteFee,
+    updateFee,
+    updateOverdueFees,
+    sendFeeOverdueNotificationsToClass   // ⭐ THÊM IMPORT
+} from '@/service/fee.js';
 
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser } from '@/service/authService.js';
@@ -83,6 +96,9 @@ const notifySendViaApp = ref(true);
 const notifySendViaEmail = ref(false);
 const notifyOnlyNotPaid = ref(true);
 const selectedNotifyStudentIds = ref([]);
+
+const notifyMessage = ref('');   // ⭐ Nội dung thông báo tùy chọn
+const notifySending = ref(false); // ⭐ Trạng thái đang gửi
 
 const detailDialogVisible = ref(false);
 const detailLoading = ref(false);
@@ -212,7 +228,11 @@ const filteredRows = computed(() => {
 
     const kw = keyword.value.trim().toLowerCase();
     if (kw) {
-        list = list.filter((r) => (r.studentName || '').toLowerCase().includes(kw) || (r.studentCode || '').toLowerCase().includes(kw));
+        list = list.filter(
+            (r) =>
+                (r.studentName || '').toLowerCase().includes(kw) ||
+                (r.studentCode || '').toLowerCase().includes(kw)
+        );
     }
 
     return list;
@@ -412,7 +432,10 @@ async function onExportExcel() {
 
 /* ===== Update overdue ===== */
 async function onUpdateOverdue() {
-    const { isConfirmed } = await confirmDialog('Cập nhật trạng thái quá hạn?', 'Hệ thống sẽ tự động đánh dấu các khoản học phí đã quá hạn.');
+    const { isConfirmed } = await confirmDialog(
+        'Cập nhật trạng thái quá hạn?',
+        'Hệ thống sẽ tự động đánh dấu các khoản học phí đã quá hạn.'
+    );
     if (!isConfirmed) return;
 
     try {
@@ -546,16 +569,71 @@ async function openDetailDialog(row) {
 /* ===== Notification ===== */
 function openNotifyDialog() {
     notifyDialogVisible.value = true;
+    notifySendViaApp.value = true;
+    notifySendViaEmail.value = false;
+    notifyOnlyNotPaid.value = true;
+    notifyMessage.value = '';
     selectedNotifyStudentIds.value = notifyRows.value.map((r) => r.studentId);
 }
 
-function onSendNotification() {
-    const count = selectedNotifyStudentIds.value.length;
-    swalToast.fire({
-        icon: 'success',
-        title: `Đã gửi thông báo cho ${count} phụ huynh`
-    });
-    notifyDialogVisible.value = false;
+/**
+ * Gửi thông báo: gọi BE /fees/notify-overdue
+ * BE sẽ tự lọc những học phí trễ hạn của từng phụ huynh trong lớp.
+ */
+async function onSendNotification() {
+    if (!selectedClass.value) {
+        swalToast.fire({ icon: 'info', title: 'Vui lòng chọn lớp' });
+        return;
+    }
+    if (!selectedNotifyStudentIds.value.length) {
+        swalToast.fire({ icon: 'info', title: 'Vui lòng chọn ít nhất 1 học sinh' });
+        return;
+    }
+
+    const targetRows = notifyRows.value.filter((r) => selectedNotifyStudentIds.value.includes(r.studentId));
+
+    const defaultTitle = `Thông báo học phí tháng ${selectedMonth.value}/${selectedYear.value}`;
+    const baseMessage = notifyMessage.value?.trim() || defaultTitle;
+
+    const listLines = targetRows.map(
+        (r, idx) =>
+            `${idx + 1}. ${r.studentName} (${r.studentCode || 'Chưa có mã'}) - ${statusConfig[r.status]?.text || r.status}`
+    );
+
+    let finalMessage =
+        baseMessage +
+        `\n\nLớp: ${selectedClass.value.name}\nKỳ: Tháng ${selectedMonth.value}/${selectedYear.value}`;
+
+    if (notifyOnlyNotPaid.value) {
+        finalMessage += '\n(Chỉ nhắc các bé chưa đóng đủ / đang trễ hạn)';
+    }
+
+    finalMessage += '\n\nDanh sách học sinh:\n' + listLines.join('\n');
+
+    notifySending.value = true;
+
+    try {
+        const res = await sendFeeOverdueNotificationsToClass({
+            classId: selectedClass.value.id,
+            customMessage: finalMessage
+        });
+
+        const title = res?.message || `Đã gửi thông báo cho lớp ${selectedClass.value.name}`;
+        swalToast.fire({
+            icon: 'success',
+            title
+        });
+        console.log('Kết quả gửi thông báo:', res?.data);
+
+        notifyDialogVisible.value = false;
+    } catch (e) {
+        swalToast.fire({
+            icon: 'error',
+            title: e.message || 'Gửi thông báo thất bại'
+        });
+    } finally {
+        notifySending.value = false;
+    }
 }
 
 /* ===== Init ===== */
@@ -619,11 +697,24 @@ onMounted(init);
         <div class="filter-bar">
             <div class="filter-group">
                 <label>Lớp</label>
-                <Dropdown v-model="selectedClass" :options="classes" optionLabel="name" placeholder="Chọn lớp" class="filter-dropdown" />
+                <Dropdown
+                    v-model="selectedClass"
+                    :options="classes"
+                    optionLabel="name"
+                    placeholder="Chọn lớp"
+                    class="filter-dropdown"
+                />
             </div>
             <div class="filter-group">
                 <label>Tháng</label>
-                <Dropdown v-model="selectedMonth" :options="months" optionLabel="label" optionValue="value" placeholder="Tháng" class="filter-dropdown" />
+                <Dropdown
+                    v-model="selectedMonth"
+                    :options="months"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Tháng"
+                    class="filter-dropdown"
+                />
             </div>
             <div class="filter-group">
                 <label>Năm</label>
@@ -752,7 +843,11 @@ onMounted(init);
                         </td>
                         <td class="col-remaining text-right">
                             <span class="amount-text" :class="{ 'text-amber-600': row.remainingAmount > 0 }">
-                                {{ row.feeId ? formatCurrency(row.remainingAmount ?? row.totalAmount - row.paidAmount) : '—' }}
+                                {{
+                                    row.feeId
+                                        ? formatCurrency(row.remainingAmount ?? row.totalAmount - row.paidAmount)
+                                        : '—'
+                                }}
                             </span>
                         </td>
                         <td class="col-due">
@@ -763,34 +858,65 @@ onMounted(init);
                                     class="due-remaining"
                                     :class="{
                                         'text-red-500': getDaysRemaining(row.dueDate) < 0,
-                                        'text-amber-500': getDaysRemaining(row.dueDate) >= 0 && getDaysRemaining(row.dueDate) <= 3,
+                                        'text-amber-500':
+                                            getDaysRemaining(row.dueDate) >= 0 &&
+                                            getDaysRemaining(row.dueDate) <= 3,
                                         'text-gray-400': getDaysRemaining(row.dueDate) > 3
                                     }"
                                 >
-                                    {{ getDaysRemaining(row.dueDate) < 0 ? `Quá ${Math.abs(getDaysRemaining(row.dueDate))} ngày` : getDaysRemaining(row.dueDate) === 0 ? 'Hôm nay' : `Còn ${getDaysRemaining(row.dueDate)} ngày` }}
+                                    {{
+                                        getDaysRemaining(row.dueDate) < 0
+                                            ? `Quá ${Math.abs(getDaysRemaining(row.dueDate))} ngày`
+                                            : getDaysRemaining(row.dueDate) === 0
+                                              ? 'Hôm nay'
+                                              : `Còn ${getDaysRemaining(row.dueDate)} ngày`
+                                    }}
                                 </span>
                             </div>
                             <span v-else class="text-gray-400">—</span>
                         </td>
                         <td class="col-status text-center">
-                            <span class="status-badge" :class="[statusConfig[row.status]?.bg, statusConfig[row.status]?.text_color]">
+                            <span
+                                class="status-badge"
+                                :class="[statusConfig[row.status]?.bg, statusConfig[row.status]?.text_color]"
+                            >
                                 <i :class="['fa-solid', statusConfig[row.status]?.icon]"></i>
                                 {{ statusConfig[row.status]?.text || row.status }}
                             </span>
                         </td>
                         <td class="col-actions">
                             <div class="action-buttons">
-                                <button v-if="canPay(row)" class="action-btn action-pay" @click="openPayDialog(row)" title="Thu tiền">
+                                <button
+                                    v-if="canPay(row)"
+                                    class="action-btn action-pay"
+                                    @click="openPayDialog(row)"
+                                    title="Thu tiền"
+                                >
                                     <i class="fa-solid fa-hand-holding-dollar"></i>
                                     <span>Thu tiền</span>
                                 </button>
-                                <button class="action-btn action-detail" @click="openDetailDialog(row)" :disabled="!row.feeId" title="Xem chi tiết">
+                                <button
+                                    class="action-btn action-detail"
+                                    @click="openDetailDialog(row)"
+                                    :disabled="!row.feeId"
+                                    title="Xem chi tiết"
+                                >
                                     <i class="fa-solid fa-eye"></i>
                                 </button>
-                                <button class="action-btn action-edit" @click="openEditDialog(row)" :disabled="!canEdit(row)" title="Sửa">
+                                <button
+                                    class="action-btn action-edit"
+                                    @click="openEditDialog(row)"
+                                    :disabled="!canEdit(row)"
+                                    title="Sửa"
+                                >
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button class="action-btn action-delete" @click="onDeleteFee(row)" :disabled="!canDelete(row)" title="Xóa">
+                                <button
+                                    class="action-btn action-delete"
+                                    @click="onDeleteFee(row)"
+                                    :disabled="!canDelete(row)"
+                                    title="Xóa"
+                                >
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
@@ -817,7 +943,13 @@ onMounted(init);
                 /
                 {{ filteredRows.length }} bản ghi
             </div>
-            <Paginator :rows="rowsPerPage" :totalRecords="filteredRows.length" :first="first" @page="onPageChange" :rowsPerPageOptions="[10, 20, 50]" />
+            <Paginator
+                :rows="rowsPerPage"
+                :totalRecords="filteredRows.length"
+                :first="first"
+                @page="onPageChange"
+                :rowsPerPageOptions="[10, 20, 50]"
+            />
         </div>
 
         <!-- Quick actions floating -->
@@ -826,7 +958,13 @@ onMounted(init);
         </button>
 
         <!-- Dialog: Bulk fee -->
-        <Dialog v-model:visible="bulkDialogVisible" modal :style="{ width: '420px' }" header="Tạo học phí cho cả lớp" :draggable="false">
+        <Dialog
+            v-model:visible="bulkDialogVisible"
+            modal
+            :style="{ width: '420px' }"
+            header="Tạo học phí cho cả lớp"
+            :draggable="false"
+        >
             <div class="dialog-content">
                 <div class="dialog-info-box">
                     <i class="fa-solid fa-info-circle"></i>
@@ -842,7 +980,15 @@ onMounted(init);
                         Số tiền mỗi học sinh
                         <span class="required">*</span>
                     </label>
-                    <InputNumber v-model="bulkAmount" :min="0" mode="decimal" :useGrouping="true" suffix=" đ" class="w-full" placeholder="Nhập số tiền..." />
+                    <InputNumber
+                        v-model="bulkAmount"
+                        :min="0"
+                        mode="decimal"
+                        :useGrouping="true"
+                        suffix=" đ"
+                        class="w-full"
+                        placeholder="Nhập số tiền..."
+                    />
                 </div>
 
                 <div class="form-group">
@@ -850,7 +996,13 @@ onMounted(init);
                         Hạn đóng
                         <span class="required">*</span>
                     </label>
-                    <Calendar v-model="bulkDueDate" showIcon dateFormat="dd/mm/yy" class="w-full" placeholder="Chọn ngày..." />
+                    <Calendar
+                        v-model="bulkDueDate"
+                        showIcon
+                        dateFormat="dd/mm/yy"
+                        class="w-full"
+                        placeholder="Chọn ngày..."
+                    />
                 </div>
             </div>
 
@@ -866,7 +1018,13 @@ onMounted(init);
         </Dialog>
 
         <!-- Dialog: Payment -->
-        <Dialog v-model:visible="payDialogVisible" modal :style="{ width: '450px' }" header="Thu học phí" :draggable="false">
+        <Dialog
+            v-model:visible="payDialogVisible"
+            modal
+            :style="{ width: '450px' }"
+            header="Thu học phí"
+            :draggable="false"
+        >
             <div v-if="payTarget" class="dialog-content">
                 <div class="student-card">
                     <div class="student-avatar large">
@@ -890,7 +1048,11 @@ onMounted(init);
                     <div class="summary-row highlight">
                         <span>Còn lại:</span>
                         <span class="value text-amber-600">
-                            {{ formatCurrency(payTarget.remainingAmount ?? payTarget.totalAmount - payTarget.paidAmount) }}
+                            {{
+                                formatCurrency(
+                                    payTarget.remainingAmount ?? payTarget.totalAmount - payTarget.paidAmount
+                                )
+                            }}
                         </span>
                     </div>
                 </div>
@@ -900,7 +1062,14 @@ onMounted(init);
                         Số tiền thu
                         <span class="required">*</span>
                     </label>
-                    <InputNumber v-model="payAmount" :min="0" mode="decimal" :useGrouping="true" suffix=" đ" class="w-full" />
+                    <InputNumber
+                        v-model="payAmount"
+                        :min="0"
+                        mode="decimal"
+                        :useGrouping="true"
+                        suffix=" đ"
+                        class="w-full"
+                    />
                 </div>
 
                 <div class="form-row">
@@ -943,7 +1112,13 @@ onMounted(init);
         </Dialog>
 
         <!-- Dialog: Edit fee -->
-        <Dialog v-model:visible="editDialogVisible" modal :style="{ width: '420px' }" header="Sửa thông tin học phí" :draggable="false">
+        <Dialog
+            v-model:visible="editDialogVisible"
+            modal
+            :style="{ width: '420px' }"
+            header="Sửa thông tin học phí"
+            :draggable="false"
+        >
             <div v-if="editTarget" class="dialog-content">
                 <div class="student-card small">
                     <div class="student-avatar">
@@ -960,7 +1135,14 @@ onMounted(init);
                         Tổng học phí
                         <span class="required">*</span>
                     </label>
-                    <InputNumber v-model="editAmount" :min="0" mode="decimal" :useGrouping="true" suffix=" đ" class="w-full" />
+                    <InputNumber
+                        v-model="editAmount"
+                        :min="0"
+                        mode="decimal"
+                        :useGrouping="true"
+                        suffix=" đ"
+                        class="w-full"
+                    />
                 </div>
 
                 <div class="form-group">
@@ -986,7 +1168,13 @@ onMounted(init);
         </Dialog>
 
         <!-- Dialog: Fee detail -->
-        <Dialog v-model:visible="detailDialogVisible" modal :style="{ width: '600px', maxWidth: '95vw' }" header="Chi tiết học phí" :draggable="false">
+        <Dialog
+            v-model:visible="detailDialogVisible"
+            modal
+            :style="{ width: '600px', maxWidth: '95vw' }"
+            header="Chi tiết học phí"
+            :draggable="false"
+        >
             <div v-if="detailLoading" class="loading-state">
                 <i class="fa-solid fa-spinner fa-spin"></i>
                 <span>Đang tải...</span>
@@ -1064,7 +1252,13 @@ onMounted(init);
         </Dialog>
 
         <!-- Dialog: Notification -->
-        <Dialog v-model:visible="notifyDialogVisible" modal :style="{ width: '550px' }" header="Gửi thông báo học phí" :draggable="false">
+        <Dialog
+            v-model:visible="notifyDialogVisible"
+            modal
+            :style="{ width: '550px' }"
+            header="Gửi thông báo học phí"
+            :draggable="false"
+        >
             <div class="dialog-content">
                 <div class="dialog-info-box">
                     <i class="fa-solid fa-bell"></i>
@@ -1075,6 +1269,7 @@ onMounted(init);
                     </span>
                 </div>
 
+                <!-- Kênh gửi -->
                 <div class="notify-options">
                     <label class="checkbox-item">
                         <Checkbox v-model="notifySendViaApp" :binary="true" />
@@ -1082,17 +1277,30 @@ onMounted(init);
                     </label>
                     <label class="checkbox-item disabled">
                         <Checkbox v-model="notifySendViaEmail" :binary="true" disabled />
-                        <span>Gửi email (chưa hỗ trợ)</span>
+                        <span>Gửi email ()</span>
                     </label>
                 </div>
 
+                <!-- Lọc đối tượng -->
                 <div class="notify-filter">
                     <label class="checkbox-item">
                         <Checkbox v-model="notifyOnlyNotPaid" :binary="true" />
-                        <span>Chỉ gửi cho phụ huynh chưa đóng đủ</span>
+                        <span>Chỉ gửi cho phụ huynh chưa đóng đủ / trễ hạn</span>
                     </label>
                 </div>
 
+                <!-- Nội dung -->
+                <div class="form-group">
+                    <label class="form-label">Nội dung thông báo (tuỳ chọn)</label>
+                    <textarea
+                        v-model="notifyMessage"
+                        class="notify-message-input"
+                        rows="3"
+                        placeholder="Ví dụ: Quý phụ huynh vui lòng hoàn tất học phí cho bé trong tuần này để không ảnh hưởng đến việc học của con..."
+                    ></textarea>
+                </div>
+
+                <!-- Danh sách học sinh -->
                 <div class="notify-list">
                     <div class="list-header">
                         <label class="checkbox-item">
@@ -1101,14 +1309,28 @@ onMounted(init);
                         </label>
                     </div>
                     <div class="list-body">
-                        <div v-for="row in notifyRows" :key="row.studentId" class="notify-row" @click="toggleNotifyRow(row)">
-                            <Checkbox :modelValue="selectedNotifyStudentIds.includes(row.studentId)" :binary="true" @change="toggleNotifyRow(row)" />
+                        <div
+                            v-for="row in notifyRows"
+                            :key="row.studentId"
+                            class="notify-row"
+                            @click="toggleNotifyRow(row)"
+                        >
+                            <Checkbox
+                                :modelValue="selectedNotifyStudentIds.includes(row.studentId)"
+                                :binary="true"
+                                @change.stop="toggleNotifyRow(row)"
+                            />
                             <span class="row-name">{{ row.studentName }}</span>
-                            <span class="row-status" :class="[statusConfig[row.status]?.bg, statusConfig[row.status]?.text_color]">
+                            <span
+                                class="row-status"
+                                :class="[statusConfig[row.status]?.bg, statusConfig[row.status]?.text_color]"
+                            >
                                 {{ statusConfig[row.status]?.text }}
                             </span>
                         </div>
-                        <div v-if="!notifyRows.length" class="empty-list">Không có học sinh nào để gửi thông báo</div>
+                        <div v-if="!notifyRows.length" class="empty-list">
+                            Không có học sinh nào để gửi thông báo
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1116,9 +1338,20 @@ onMounted(init);
             <template #footer>
                 <div class="dialog-footer">
                     <button class="btn btn-ghost" @click="notifyDialogVisible = false">Hủy</button>
-                    <button class="btn btn-primary" @click="onSendNotification" :disabled="!selectedNotifyStudentIds.length">
-                        <i class="fa-solid fa-paper-plane"></i>
-                        Gửi thông báo ({{ selectedNotifyStudentIds.length }})
+                    <button
+                        class="btn btn-primary"
+                        @click="onSendNotification"
+                        :disabled="!selectedNotifyStudentIds.length || notifySending"
+                    >
+                        <i v-if="!notifySending" class="fa-solid fa-paper-plane"></i>
+                        <i v-else class="fa-solid fa-spinner fa-spin"></i>
+                        <span>
+                            {{
+                                notifySending
+                                    ? 'Đang gửi...'
+                                    : `Gửi thông báo (${selectedNotifyStudentIds.length})`
+                            }}
+                        </span>
                     </button>
                 </div>
             </template>
@@ -1938,5 +2171,22 @@ onMounted(init);
     padding: 0.75rem;
     font-size: 0.875rem;
     color: #9ca3af;
+}
+
+/* ⭐ Textarea nội dung thông báo */
+.notify-message-input {
+    width: 100%;
+    min-height: 80px;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    font-size: 0.875rem;
+    resize: vertical;
+    outline: none;
+}
+
+.notify-message-input:focus {
+    border-color: #10b981;
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15);
 }
 </style>

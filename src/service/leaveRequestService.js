@@ -1,5 +1,6 @@
-// src/service/leaveRequestService.js
 import http from '@/service/http.js';
+
+const WITH_CREDENTIALS = (import.meta.env.VITE_WITH_CREDENTIALS ?? 'true') === 'true';
 
 /* Helper thêm /api/v1 nếu baseURL chưa có */
 function withApiV1(path) {
@@ -17,57 +18,100 @@ function getErrMsg(err, fallback) {
     );
 }
 
-/* =========================================================
- * 1. API GIÁO VIÊN – LeaveRequestService (BE)
- *    - GET  /leave-requests/teachers/classes/{classId}/pending
- *    - PATCH /leave-requests/teachers/{requestId}/approve
- *    - PATCH /leave-requests/teachers/{requestId}/reject
- *
- *  Backend sẽ:
- *    - Lấy teacher từ token (Authorization)
- *    - Kiểm tra teacher có dạy classId đó không
- * =======================================================*/
-
-/** Lấy danh sách đơn xin nghỉ CHỜ DUYỆT theo lớp (giáo viên) */
-export async function fetchPendingLeaveRequestsByClass(classId) {
-    if (!classId) throw new Error('Thiếu classId');
-    const url = withApiV1(`/leave-requests/teachers/classes/${classId}/pending`);
+/* ====================== PARENT APIs ====================== */
+/**
+ * PARENT – Gửi đơn xin nghỉ
+ * POST /leave-requests/parents
+ * body: { studentId, leaveDate (yyyy-MM-dd), reason }
+ */
+export async function createLeaveRequest(payload) {
+    const url = withApiV1('/leave-requests/parents');
     try {
-        const res = await http.get(url);
-        // BE trả ApiResponse<List<LeaveRequestResponse>>
+        const res = await http.post(url, payload, {
+            withCredentials: WITH_CREDENTIALS
+        });
+        return res?.data?.data || res?.data || null;
+    } catch (err) {
+        throw new Error(getErrMsg(err, 'Gửi đơn xin nghỉ thất bại'));
+    }
+}
+
+/**
+ * PARENT – Lấy danh sách đơn xin nghỉ của phụ huynh hiện tại
+ * GET /leave-requests/parents
+ */
+export async function fetchLeaveRequestsOfParent() {
+    const url = withApiV1('/leave-requests/parents');
+    try {
+        const res = await http.get(url, {
+            withCredentials: WITH_CREDENTIALS
+        });
         return res?.data?.data || res?.data || [];
     } catch (err) {
-        if (err?.response?.status === 401) {
-            throw new Error(
-                'Không có quyền truy cập (401). Vui lòng đăng nhập lại hoặc kiểm tra token.'
-            );
-        }
         throw new Error(getErrMsg(err, 'Lấy danh sách đơn xin nghỉ thất bại'));
     }
 }
 
 /**
- * Duyệt đơn xin nghỉ
- * @param requestId  ID đơn xin nghỉ
- * @param teacherName  Tên GV (BE đang nhận qua param, bạn có thể lấy từ store auth)
- * @param teacherNote  Ghi chú giáo viên
+ * PARENT – Hủy đơn xin nghỉ
+ * PATCH /leave-requests/parents/{requestId}/cancel
  */
-export async function approveLeaveRequest(
-    requestId,
-    teacherName,
-    teacherNote = ''
-) {
+export async function cancelLeaveRequest(requestId) {
     if (!requestId) throw new Error('Thiếu requestId');
+    const url = withApiV1(`/leave-requests/parents/${requestId}/cancel`);
+    try {
+        const res = await http.patch(
+            url,
+            {},
+            {
+                withCredentials: WITH_CREDENTIALS
+            }
+        );
+        return res?.data || null;
+    } catch (err) {
+        throw new Error(getErrMsg(err, 'Hủy đơn xin nghỉ thất bại'));
+    }
+}
+
+/* ====================== TEACHER APIs ====================== */
+
+/**
+ * TEACHER – Lấy danh sách đơn PENDING theo lớp
+ * GET /leave-requests/teachers/classes/{classId}/pending
+ */
+export async function fetchPendingLeaveRequestsByClass(classId) {
+    if (!classId) throw new Error('Thiếu classId');
+    const url = withApiV1(`/leave-requests/teachers/classes/${classId}/pending`);
+    try {
+        const res = await http.get(url, {
+            withCredentials: WITH_CREDENTIALS
+        });
+        return res?.data?.data || res?.data || [];
+    } catch (err) {
+        throw new Error(getErrMsg(err, 'Lấy danh sách đơn xin nghỉ chờ duyệt thất bại'));
+    }
+}
+
+/**
+ * TEACHER – Duyệt đơn xin nghỉ
+ * PATCH /leave-requests/teachers/{requestId}/approve?teacherName=
+ * body: { teacherNote }
+ */
+export async function approveLeaveRequest(requestId, teacherName, teacherNote = '') {
+    if (!requestId) throw new Error('Thiếu requestId');
+    if (!teacherName) throw new Error('Thiếu teacherName');
+
     const url = withApiV1(`/leave-requests/teachers/${requestId}/approve`);
+
     try {
         const res = await http.patch(
             url,
             { teacherNote },
             {
-                params: { teacherName }
+                params: { teacherName },
+                withCredentials: WITH_CREDENTIALS
             }
         );
-        // BE trả ApiResponse<LeaveRequestResponse>
         return res?.data?.data || res?.data || null;
     } catch (err) {
         throw new Error(getErrMsg(err, 'Duyệt đơn xin nghỉ thất bại'));
@@ -75,34 +119,45 @@ export async function approveLeaveRequest(
 }
 
 /**
- * Từ chối đơn xin nghỉ
+ * TEACHER – Từ chối đơn xin nghỉ
+ * PATCH /leave-requests/teachers/{requestId}/reject?teacherName=
+ * body: { teacherNote }
  */
-export async function rejectLeaveRequest(
-    requestId,
-    teacherName,
-    teacherNote = ''
-) {
+export async function rejectLeaveRequest(requestId, teacherName, teacherNote = '') {
     if (!requestId) throw new Error('Thiếu requestId');
+    if (!teacherName) throw new Error('Thiếu teacherName');
+
     const url = withApiV1(`/leave-requests/teachers/${requestId}/reject`);
+
     try {
         const res = await http.patch(
             url,
             { teacherNote },
             {
-                params: { teacherName }
+                params: { teacherName },
+                withCredentials: WITH_CREDENTIALS
             }
         );
-        // BE trả ApiResponse<LeaveRequestResponse>
         return res?.data?.data || res?.data || null;
     } catch (err) {
         throw new Error(getErrMsg(err, 'Từ chối đơn xin nghỉ thất bại'));
     }
 }
 
-/* =========================================================
- * 2. (OPTIONAL) API PHỤ HUYNH – Nếu sau này bạn cần
- *    - createLeaveRequest (POST)
- *    - getLeaveRequestsByParent (GET)
- *    - cancelLeaveRequest (PATCH)
- *    Có thể bổ sung sau cho Quasar mobile.
- * =======================================================*/
+/* ====================== ADMIN APIs ====================== */
+
+/**
+ * ADMIN – Lấy toàn bộ đơn xin nghỉ trong trường
+ * GET /leave-requests/admin/all
+ */
+export async function fetchAllLeaveRequestsForAdmin() {
+    const url = withApiV1('/leave-requests/admin/all');
+    try {
+        const res = await http.get(url, {
+            withCredentials: WITH_CREDENTIALS
+        });
+        return res?.data?.data || res?.data || [];
+    } catch (err) {
+        throw new Error(getErrMsg(err, 'Lấy danh sách đơn xin nghỉ thất bại'));
+    }
+}

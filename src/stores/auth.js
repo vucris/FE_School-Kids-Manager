@@ -68,14 +68,24 @@ export const useAuthStore = defineStore('auth', {
             this.setTokens(access, refresh);
 
             // chuẩn hóa role: bỏ prefix "ROLE_"
-            const rawRole = data.role || '';
+            const rawRole = data.role || data.roleName || '';
             const normalizedRole = rawRole.startsWith('ROLE_') ? rawRole.substring(5) : rawRole;
             this.role = normalizedRole;
             localStorage.setItem('role', normalizedRole);
 
+            // 🔹 Lưu đầy đủ thông tin user
             this.setUser({
+                id: data.id || null,
                 username: data.username,
-                role: normalizedRole
+                fullName: data.fullName || '',
+                email: data.email || '',
+                phone: data.phone || '',
+                avatar: data.avatarUrl || data.avatar || '',
+                role: normalizedRole,
+                createdAt: data.createdAt || null,
+                gender: data.gender || null,
+                healthRecords: data.healthRecords || 0,
+                activityDays: data.activityDays || 0
             });
 
             return data;
@@ -114,31 +124,59 @@ export const useAuthStore = defineStore('auth', {
 
         // ================== QUÊN MẬT KHẨU – OTP GMAIL ==================
 
-        /** Bước 1: gửi OTP về email */
         async requestChangePassword(email) {
             const cleanEmail = String(email).trim();
 
             const { data } = await axios.post(
                 `${BASE_URL}/auth/request-change-password`,
-                cleanEmail, // body là plain text
+                cleanEmail,
                 {
                     withCredentials: WITH_CREDENTIALS,
                     headers: {
-                        'Content-Type': 'text/plain'   // 👈 bắt buộc để BE nhận đúng @RequestBody String
+                        'Content-Type': 'text/plain'
                     }
                 }
             );
-            return data; // "Mã OTP đã được gửi tới email của bạn."
+            return data;
         },
 
-        /** Bước 2: xác nhận OTP + đổi mật khẩu */
         async changePassword({ email, code, newPassword }) {
             const { data } = await axios.post(
                 `${BASE_URL}/auth/change-password`,
                 { email, code, newPassword },
                 { withCredentials: WITH_CREDENTIALS }
             );
-            return data; // "Đổi mật khẩu thành công!"
+            return data;
+        },
+
+        // ================== CẬP NHẬT HỒ SƠ CƠ BẢN ==================
+        /**
+         * payload: { fullName, email, phone, avatar }
+         * NOTE: giả sử có API PUT /accounts/me để cập nhật.
+         */
+        async updateProfileBasic(payload) {
+            // TODO: nếu BE dùng path khác thì đổi ở đây
+            const { data } = await axios.put(
+                `${BASE_URL}/accounts/me`,
+                payload,
+                { withCredentials: WITH_CREDENTIALS }
+            );
+
+            // BE có thể trả ApiResponse -> lấy data.data hoặc data
+            const raw = data?.data || data;
+
+            const merged = {
+                ...(this.user || {}),
+                ...{
+                    fullName: raw.fullName ?? payload.fullName,
+                    email: raw.email ?? payload.email,
+                    phone: raw.phone ?? payload.phone,
+                    avatar: raw.avatarUrl || raw.avatar || payload.avatar
+                }
+            };
+
+            this.setUser(merged);
+            return merged;
         }
     }
 });

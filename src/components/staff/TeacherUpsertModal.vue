@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 
+import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Dropdown from 'primevue/dropdown';
 
@@ -33,6 +34,11 @@ const visible = computed({
 const isEdit = computed(() => !!props.teacher?.id);
 const loading = ref(false);
 const errorMsg = ref('');
+
+/** ✅ NEW: username hiển thị dưới "Họ và tên" khi sửa */
+const usernameDisplay = computed(() => {
+    return props.teacher?.username || (props.teacher?.email ? String(props.teacher.email).split('@')[0] : '');
+});
 
 const form = reactive({
     username: '',
@@ -137,8 +143,6 @@ function validate() {
         return false;
     }
 
-    // employeeCode không bắt buộc nữa – BE tự sinh nếu để trống
-
     // dateOfBirth có thể để trống, nhưng nếu nhập thì kiểm tra format sơ sơ
     if (form.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(form.dateOfBirth)) {
         errorMsg.value = 'Ngày sinh không đúng định dạng YYYY-MM-DD';
@@ -200,7 +204,6 @@ async function handleUpdate() {
             dateOfBirth: form.dateOfBirth || null,
             gender: form.gender || null,
             specialization: form.specialization.trim() || null,
-            // Khi sửa, vẫn gửi employeeCode hiện có (nếu bạn muốn không cho sửa có thể set readonly ở UI)
             employeeCode: form.employeeCode.trim() || null,
             emergencyContact: form.emergencyContact.trim() || null
         };
@@ -226,9 +229,7 @@ async function onSubmit() {
 }
 
 /* ============= HELPERS ============= */
-const dialogTitle = computed(() =>
-    isEdit.value ? 'Chỉnh sửa giáo viên' : 'Thêm giáo viên mới'
-);
+const dialogTitle = computed(() => (isEdit.value ? 'Chỉnh sửa giáo viên' : 'Thêm giáo viên mới'));
 </script>
 
 <template>
@@ -254,25 +255,14 @@ const dialogTitle = computed(() =>
                         Tên đăng nhập
                         <span class="required">*</span>
                     </label>
-                    <InputText
-                        v-model="form.username"
-                        placeholder="VD: giaovien001"
-                        class="w-full"
-                        autocomplete="off"
-                    />
+                    <InputText v-model="form.username" placeholder="VD: giaovien001" class="w-full" autocomplete="off" />
                 </div>
                 <div class="form-field">
                     <label>
                         Mật khẩu
                         <span class="required">*</span>
                     </label>
-                    <InputText
-                        v-model="form.password"
-                        type="password"
-                        placeholder="Tối thiểu 6 ký tự"
-                        class="w-full"
-                        autocomplete="new-password"
-                    />
+                    <InputText v-model="form.password" type="password" placeholder="Tối thiểu 6 ký tự" class="w-full" autocomplete="new-password" />
                 </div>
             </div>
 
@@ -283,22 +273,18 @@ const dialogTitle = computed(() =>
                         Họ và tên giáo viên
                         <span class="required">*</span>
                     </label>
-                    <InputText
-                        v-model="form.fullName"
-                        placeholder="VD: Nguyễn Thị A"
-                        class="w-full"
-                    />
+                    <InputText v-model="form.fullName" placeholder="VD: Nguyễn Thị A" class="w-full" />
+
+                    <!-- ✅ NEW: hiển thị username dưới họ tên khi sửa (giữ UI hint hiện có) -->
+                    <span v-if="isEdit && usernameDisplay" class="field-hint">
+                        Username: <b>{{ usernameDisplay }}</b>
+                    </span>
                 </div>
+
                 <div class="form-field">
                     <label>Mã giáo viên / Mã nhân viên</label>
-                    <InputText
-                        v-model="form.employeeCode"
-                        placeholder="Để trống nếu muốn hệ thống tự sinh"
-                        class="w-full"
-                    />
-                    <span class="field-hint">
-                        Nếu để trống khi tạo mới, hệ thống sẽ tự sinh mã giáo viên.
-                    </span>
+                    <InputText v-model="form.employeeCode" placeholder="Để trống nếu muốn hệ thống tự sinh" class="w-full" />
+                    <span class="field-hint">Nếu để trống khi tạo mới, hệ thống sẽ tự sinh mã giáo viên.</span>
                 </div>
             </div>
 
@@ -317,11 +303,7 @@ const dialogTitle = computed(() =>
                 </div>
                 <div class="form-field">
                     <label>Ngày sinh (YYYY-MM-DD)</label>
-                    <InputText
-                        v-model="form.dateOfBirth"
-                        placeholder="VD: 1990-05-20"
-                        class="w-full"
-                    />
+                    <InputText v-model="form.dateOfBirth" placeholder="VD: 1990-05-20" class="w-full" />
                 </div>
             </div>
 
@@ -329,47 +311,29 @@ const dialogTitle = computed(() =>
             <div class="form-row">
                 <div class="form-field">
                     <label>Email</label>
-                    <InputText
-                        v-model="form.email"
-                        placeholder="VD: giaovien@example.com"
-                        class="w-full"
-                    />
+                    <InputText v-model="form.email" placeholder="VD: giaovien@example.com" class="w-full" />
                 </div>
                 <div class="form-field">
                     <label>Số điện thoại</label>
-                    <InputText
-                        v-model="form.phone"
-                        placeholder="VD: 0912345678"
-                        class="w-full"
-                    />
+                    <InputText v-model="form.phone" placeholder="VD: 0912345678" class="w-full" />
                 </div>
             </div>
 
             <!-- Công tác -->
             <div class="form-field">
                 <label>Chuyên môn / Bộ môn phụ trách</label>
-                <InputText
-                    v-model="form.specialization"
-                    placeholder="VD: Giáo dục mầm non, Tiếng Anh, Âm nhạc..."
-                    class="w-full"
-                />
+                <InputText v-model="form.specialization" placeholder="VD: Giáo dục mầm non, Tiếng Anh, Âm nhạc..." class="w-full" />
             </div>
 
             <div class="form-field">
                 <label>Liên hệ khẩn cấp</label>
-                <InputText
-                    v-model="form.emergencyContact"
-                    placeholder="Số ĐT người thân / ghi chú liên hệ khẩn cấp"
-                    class="w-full"
-                />
+                <InputText v-model="form.emergencyContact" placeholder="Số ĐT người thân / ghi chú liên hệ khẩn cấp" class="w-full" />
             </div>
         </div>
 
         <template #footer>
             <div class="dialog-footer">
-                <button class="btn btn-ghost" @click="visible = false" :disabled="loading">
-                    Hủy
-                </button>
+                <button class="btn btn-ghost" @click="visible = false" :disabled="loading">Hủy</button>
                 <button class="btn btn-primary" @click="onSubmit" :disabled="loading">
                     <i v-if="loading" class="fa-solid fa-spinner fa-spin"></i>
                     <i v-else :class="['fa-solid', isEdit ? 'fa-save' : 'fa-check']"></i>

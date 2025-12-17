@@ -1,16 +1,23 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import Chart from 'primevue/chart';
 import Dropdown from 'primevue/dropdown';
 import { useRouter } from 'vue-router';
 
-import { fetchDashboardStats, fetchBirthdaySummaryForMonth } from '@/service/dashboardService.js';
+import { fetchDashboardStats } from '@/service/dashboardService.js';
 import { fetchAllMenuDishes } from '@/service/menuService.js';
 import { fetchAttendanceSummary } from '@/service/attendanceService.js';
 import { fetchClassOptions } from '@/service/classService.js';
 import { fetchFeeSummary, fetchAvailableSemesters, fetchAvailableYears } from '@/service/fee.js';
+
 import { fetchFeedbacksByStatus } from '@/service/feedback.js';
+import { fetchAllLeaveRequestsForAdmin } from '@/service/leaveRequestService.js';
+import { getAlbumsByStatus } from '@/service/albumService.js';
+
+// ✅ Birthday: lấy list thật từ students/teachers
+import { fetchStudents } from '@/service/studentService.js';
+import { fetchTeachers } from '@/service/teacherService.js'; // nếu không có, báo mình để đổi sang service khác
 
 /* ========== STATE ========== */
 
@@ -19,7 +26,7 @@ const router = useRouter();
 const schoolName = ref('Mầm non Canada Maple Bear');
 const academicYear = ref('2024 - 2025');
 
-/** 4 thẻ thống kê – KHÔNG còn số mẫu, khởi tạo 0 hết */
+/** 4 thẻ thống kê */
 const stats = ref([
     { key: 'classes', label: 'Tổng số lớp', value: 0, icon: 'fa-solid fa-school', bg: 'bg-blue-100', fg: 'text-blue-600' },
     { key: 'students', label: 'Tổng số học sinh', value: 0, icon: 'fa-solid fa-children', bg: 'bg-emerald-100', fg: 'text-emerald-600' },
@@ -27,51 +34,20 @@ const stats = ref([
     { key: 'parents', label: 'Tổng số phụ huynh', value: 0, icon: 'fa-solid fa-people-group', bg: 'bg-cyan-100', fg: 'text-cyan-600' }
 ]);
 
-/** Cache lớp để dùng cho điểm danh & học phí */
+/** Cache lớp */
 const classOptions = ref([]); // [{ id, name }]
 
-/** Hoạt động: dùng state để có thể cập nhật từ API + gắn link */
+/** Hoạt động */
 const activities = ref([
-    {
-        key: 'menuToday',
-        label: 'Thực đơn ngày',
-        value: '0 món',
-        icon: 'fa-solid fa-utensils',
-        routeName: 'MenuFeature'
-    },
-    {
-        key: 'newStudentsThisMonth',
-        label: 'Học sinh mới trong tháng',
-        value: '0',
-        icon: 'fa-solid fa-user-graduate',
-        routeName: 'QLHocSinh'
-    }
-    // Nếu sau này muốn thêm “Báo cáo điểm danh hôm nay” thì push thêm 1 object ở đây
+    { key: 'menuToday', label: 'Thực đơn ngày', value: '0 món', icon: 'fa-solid fa-utensils', routeName: 'MenuFeature' },
+    { key: 'newStudentsThisMonth', label: 'Học sinh mới trong tháng', value: '0', icon: 'fa-solid fa-user-graduate', routeName: 'QLHocSinh' }
 ]);
 
-/** Bảng "Kiểm duyệt" – có gắn key + routeName để điều hướng */
+/** Kiểm duyệt */
 const review = ref([
-    {
-        key: 'leavePending',
-        label: 'Đơn xin nghỉ chưa duyệt',
-        value: 0,
-        accent: 'text-red-500',
-        routeName: 'leaveRequest'
-    },
-    {
-        key: 'feedbackPending',
-        label: 'Góp ý chưa xử lý',
-        value: 0,
-        accent: 'text-yellow-600',
-        routeName: 'feedbackInbox'
-    },
-    {
-        key: 'albumPending',
-        label: 'Album chưa kiểm duyệt',
-        value: 0,
-        accent: 'text-teal-600',
-        routeName: 'AlbumManager'
-    }
+    { key: 'leavePending', label: 'Đơn xin nghỉ chưa duyệt', value: 0, accent: 'text-red-500', routeName: 'leaveRequest' },
+    { key: 'feedbackPending', label: 'Góp ý chưa xử lý', value: 0, accent: 'text-yellow-600', routeName: 'feedbackInbox' },
+    { key: 'albumPending', label: 'Album chưa kiểm duyệt', value: 0, accent: 'text-teal-600', routeName: 'AlbumManager' }
 ]);
 
 /* ========== Helpers chung ========== */
@@ -93,7 +69,7 @@ const studentStatusData = ref({
     labels: ['Đang đi học', 'Chờ phân lớp', 'Đã bảo lưu', 'Đã thôi học', 'Đã tốt nghiệp'],
     datasets: [
         {
-            data: [0, 0, 0, 0, 0], // sẽ cập nhật từ API
+            data: [0, 0, 0, 0, 0],
             backgroundColor: ['#4C6EF5', '#8CE0FF', '#FFC857', '#EF4444', '#5AC8FA'],
             hoverBackgroundColor: ['#3B5BDB', '#74C7EC', '#FFB020', '#DC2626', '#38BDF8'],
             borderWidth: 0
@@ -104,22 +80,14 @@ const studentStatusData = ref({
 const doughnutOptionsRightLegend = {
     cutout: '60%',
     plugins: {
-        legend: {
-            position: 'right',
-            labels: { usePointStyle: true, boxWidth: 10, padding: 16 }
-        },
-        tooltip: {
-            callbacks: {
-                label: (ctx) => `${ctx.label}: ${ctx.parsed}`
-            }
-        }
+        legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 10, padding: 16 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed}` } }
     },
     maintainAspectRatio: false,
     responsive: true
 };
 
-/* ========== 2) Điểm danh – tổng quan 1 lớp hôm nay ========== */
-
+/* ========== 2) Điểm danh ========== */
 const attendanceData = ref({
     labels: ['Đi học', 'Nghỉ', 'Đi trễ', 'Về sớm', 'Chưa điểm danh'],
     datasets: [
@@ -131,18 +99,13 @@ const attendanceData = ref({
         }
     ]
 });
-
 const attendanceSummary = ref(null);
 const attendanceClass = ref(null);
 const attendanceDate = ref(new Date());
 
 /* ========== 3) Thu theo kỳ (học phí) ========== */
-
-const feeOptions = ref([
-    { label: 'Học phí Tháng 10', value: '2024-10' },
-    { label: 'Học phí Tháng 9', value: '2024-09' }
-]);
-const selectedFee = ref(feeOptions.value[0]);
+const feeOptions = ref([]); // [{ label, value: { semester, year } }]
+const selectedFee = ref(null);
 
 const feeData = ref({
     labels: ['Số đã thu', 'Số còn phải thu'],
@@ -164,28 +127,100 @@ const feeCollectedAmount = ref(0);
 const feeRemainingAmount = ref(0);
 const feePercent = ref(0);
 
-/* ========== 4) Sinh nhật tháng 10 ========== */
-const birthdaysStudents = ref([]);
-const birthdaysStaff = ref([]);
+/* ========== 4) Sinh nhật tháng hiện tại ========== */
+const birthdayMonth = computed(() => new Date().getMonth() + 1); // 1..12
+
+// list hiển thị (tối đa 12 avatar mỗi nhóm để đẹp)
+const birthdaysStudents = ref([]); // [{ id, name, dob }]
+const birthdaysStaff = ref([]); // [{ id, name, dob }]
+
+const birthdayStudentsTotal = ref(0);
+const birthdayStaffTotal = ref(0);
 
 /* ========== Loading & Error ========== */
 const loading = ref(false);
 const errorMessage = ref(null);
 
-/* ========== LOADERS RIÊNG ========== */
+/* ========== Birthday helpers ========== */
+function parseDateSafe(d) {
+    if (!d) return null;
+    try {
+        const dt = new Date(d);
+        if (Number.isNaN(dt.getTime())) return null;
+        return dt;
+    } catch {
+        return null;
+    }
+}
 
-/** Lấy danh sách lớp (dùng chung cho điểm danh + học phí) */
+function formatDobVi(d) {
+    const dt = parseDateSafe(d);
+    if (!dt) return '';
+    return dt.toLocaleDateString('vi-VN');
+}
+
+function getAvatarText(name) {
+    if (!name) return '?';
+    const parts = String(name).trim().split(/\s+/);
+    if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return String(name)[0].toUpperCase();
+}
+
+function getAvatarClass(seed) {
+    const colors = [
+        'bg-blue-200 text-blue-700',
+        'bg-emerald-200 text-emerald-700',
+        'bg-amber-200 text-amber-700',
+        'bg-purple-200 text-purple-700',
+        'bg-pink-200 text-pink-700',
+        'bg-cyan-200 text-cyan-700'
+    ];
+    const s = String(seed || '');
+    const idx = s ? s.charCodeAt(0) % colors.length : 0;
+    return colors[idx];
+}
+
+function isBirthdayInMonth(dob, month) {
+    const dt = parseDateSafe(dob);
+    if (!dt) return false;
+    return dt.getMonth() + 1 === month;
+}
+
+/* ========== LOADERS RIÊNG ========== */
 async function ensureClassOptions() {
     if (classOptions.value.length) return;
     try {
-        const opts = await fetchClassOptions(); // [{ value, label }]
+        const opts = await fetchClassOptions();
         classOptions.value = (opts || []).map((o) => ({ id: o.value, name: o.label }));
     } catch (e) {
         console.warn('[Dashboard] Không tải được danh sách lớp:', e?.message || e);
     }
 }
 
-/** Hoạt động: Thực đơn ngày – tổng số món ăn */
+async function ensureFeeOptions() {
+    if (feeOptions.value.length && selectedFee.value) return;
+
+    const [semesters, years] = await Promise.all([
+        fetchAvailableSemesters().catch(() => []),
+        fetchAvailableYears().catch(() => [])
+    ]);
+
+    const ys = (years || []).slice().sort((a, b) => String(b).localeCompare(String(a)));
+    const ss = (semesters || []).slice().sort((a, b) => String(b).localeCompare(String(a)));
+
+    const options = [];
+    for (const y of ys) {
+        for (const s of ss) {
+            options.push({ label: `Học phí ${s} - ${y}`, value: { semester: s, year: y } });
+        }
+    }
+
+    feeOptions.value = options;
+    if (!selectedFee.value) selectedFee.value = feeOptions.value[0] || null;
+}
+
 async function loadMenuActivity() {
     try {
         const dishes = await fetchAllMenuDishes();
@@ -196,22 +231,14 @@ async function loadMenuActivity() {
     }
 }
 
-/** Điểm danh: lấy summary 1 lớp (lấy lớp đầu tiên) cho hôm nay */
 async function loadAttendanceSummaryForDashboard() {
     try {
         await ensureClassOptions();
         const firstClass = classOptions.value[0];
-        if (!firstClass) {
-            console.warn('[Dashboard] Không có lớp để lấy báo cáo điểm danh');
-            return;
-        }
+        if (!firstClass) return;
+
         attendanceClass.value = firstClass;
-
-        const data = await fetchAttendanceSummary({
-            classId: firstClass.id,
-            date: attendanceDate.value
-        });
-
+        const data = await fetchAttendanceSummary({ classId: firstClass.id, date: attendanceDate.value });
         attendanceSummary.value = data || null;
 
         if (data) {
@@ -230,41 +257,20 @@ async function loadAttendanceSummaryForDashboard() {
     }
 }
 
-/** Học phí: tổng hợp đã thu / còn phải thu cho 1 lớp, 1 kỳ, 1 năm */
 async function loadFeeSummaryForDashboard() {
     try {
         await ensureClassOptions();
+        await ensureFeeOptions();
+
         const firstClass = classOptions.value[0];
-        if (!firstClass) {
-            console.warn('[Dashboard] Không có lớp để lấy tổng hợp học phí');
-            return;
-        }
+        if (!firstClass) return;
 
-        const [semesters, years] = await Promise.all([
-            fetchAvailableSemesters().catch((e) => {
-                console.warn('[Dashboard] fetchAvailableSemesters lỗi:', e?.message || e);
-                return [];
-            }),
-            fetchAvailableYears().catch((e) => {
-                console.warn('[Dashboard] fetchAvailableYears lỗi:', e?.message || e);
-                return [];
-            })
-        ]);
+        const picked = selectedFee.value?.value;
+        const semester = picked?.semester;
+        const year = picked?.year;
+        if (!semester || !year) return;
 
-        const semester = semesters?.[0];
-        const year = years?.[0];
-
-        if (!semester || !year) {
-            console.warn('[Dashboard] Không có kỳ / năm để load học phí');
-            return;
-        }
-
-        const summary = await fetchFeeSummary({
-            classId: firstClass.id,
-            semester,
-            year
-        });
-
+        const summary = await fetchFeeSummary({ classId: firstClass.id, semester, year });
         feeSummary.value = summary || null;
 
         if (summary) {
@@ -277,22 +283,19 @@ async function loadFeeSummaryForDashboard() {
             feeRemainingAmount.value = remainingAmount;
             feePercent.value = totalAmount > 0 ? Math.round((collectedAmount / totalAmount) * 100) : 0;
 
-            feeData.value = {
-                ...feeData.value,
-                datasets: [
-                    {
-                        ...feeData.value.datasets[0],
-                        data: [collectedAmount, remainingAmount]
-                    }
-                ]
-            };
+            feeData.value = { ...feeData.value, datasets: [{ ...feeData.value.datasets[0], data: [collectedAmount, remainingAmount] }] };
+        } else {
+            feeTotalAmount.value = 0;
+            feeCollectedAmount.value = 0;
+            feeRemainingAmount.value = 0;
+            feePercent.value = 0;
+            feeData.value = { ...feeData.value, datasets: [{ ...feeData.value.datasets[0], data: [0, 0] }] };
         }
     } catch (e) {
         console.warn('[Dashboard] loadFeeSummaryForDashboard lỗi:', e?.message || e);
     }
 }
 
-/** Kiểm duyệt: số góp ý PENDING */
 async function loadFeedbackReview() {
     try {
         const pending = await fetchFeedbacksByStatus('PENDING');
@@ -303,22 +306,101 @@ async function loadFeedbackReview() {
     }
 }
 
-/* ========== Load data từ API thực ========== */
+async function loadLeaveReview() {
+    try {
+        const list = await fetchAllLeaveRequestsForAdmin();
+        const items = Array.isArray(list) ? list : [];
+        const pendingCount = items.filter((x) => {
+            const s = String(x?.status || x?.requestStatus || '').toUpperCase();
+            if (s === 'PENDING') return true;
+            const vi = String(x?.status || '').toLowerCase();
+            return vi.includes('chờ') || vi.includes('cho') || vi.includes('pending');
+        }).length;
 
+        review.value = review.value.map((item) => (item.key === 'leavePending' ? { ...item, value: pendingCount } : item));
+    } catch (e) {
+        console.warn('[Dashboard] loadLeaveReview lỗi:', e?.message || e);
+    }
+}
+
+async function loadAlbumReview() {
+    try {
+        const albums = await getAlbumsByStatus('PENDING');
+        const count = Array.isArray(albums) ? albums.length : 0;
+        review.value = review.value.map((item) => (item.key === 'albumPending' ? { ...item, value: count } : item));
+    } catch (e) {
+        console.warn('[Dashboard] loadAlbumReview lỗi:', e?.message || e);
+    }
+}
+
+/** ✅ Sinh nhật: lấy list thật từ students + teachers, lọc theo tháng hiện tại */
+async function loadBirthdays() {
+    const month = birthdayMonth.value;
+
+    // students
+    try {
+        const all = await fetchStudents({ status: 'all', page: 1, size: 99999 }, { skipParentEnrich: true });
+        const items = Array.isArray(all?.items) ? all.items : [];
+
+        const birthdayList = items
+            .filter((s) => isBirthdayInMonth(s.dob, month))
+            .map((s) => ({
+                id: s.id,
+                name: s.name,
+                dob: s.dob
+            }))
+            .sort((a, b) => {
+                const da = parseDateSafe(a.dob);
+                const db = parseDateSafe(b.dob);
+                if (!da || !db) return 0;
+                return da.getDate() - db.getDate();
+            });
+
+        birthdayStudentsTotal.value = birthdayList.length;
+        birthdaysStudents.value = birthdayList.slice(0, 12);
+    } catch (e) {
+        console.warn('[Dashboard] loadBirthdays students lỗi:', e?.message || e);
+        birthdayStudentsTotal.value = 0;
+        birthdaysStudents.value = [];
+    }
+
+    // staff/teachers
+    try {
+        const res = await fetchTeachers({ status: 'all', page: 1, size: 10000 });
+        const items = Array.isArray(res?.items) ? res.items : [];
+
+        const birthdayList = items
+            .filter((t) => isBirthdayInMonth(t.dateOfBirth, month))
+            .map((t) => ({
+                id: t.id,
+                name: t.name,
+                dob: t.dateOfBirth
+            }))
+            .sort((a, b) => {
+                const da = parseDateSafe(a.dob);
+                const db = parseDateSafe(b.dob);
+                if (!da || !db) return 0;
+                return da.getDate() - db.getDate();
+            });
+
+        birthdayStaffTotal.value = birthdayList.length;
+        birthdaysStaff.value = birthdayList.slice(0, 12);
+    } catch (e) {
+        // Nếu teacher service không có dob hoặc không import được -> fallback 0
+        console.warn('[Dashboard] loadBirthdays staff lỗi:', e?.message || e);
+        birthdayStaffTotal.value = 0;
+        birthdaysStaff.value = [];
+    }
+}
+
+/* ========== Load data từ API thực ========== */
 async function loadDashboardBasic() {
     try {
         loading.value = true;
         errorMessage.value = null;
 
-        const [statsRes, birthdayRes] = await Promise.all([
-            fetchDashboardStats(),
-            fetchBirthdaySummaryForMonth(10) // "Chúc mừng sinh nhật tháng 10"
-        ]);
+        const statsRes = await fetchDashboardStats();
 
-        console.log('Dashboard stats >>>', statsRes);
-        console.log('Birthday summary >>>', birthdayRes);
-
-        // Cập nhật 4 card: lớp, học sinh, giáo viên, phụ huynh
         stats.value = stats.value.map((card) => {
             if (card.key === 'classes') return { ...card, value: statsRes.classes ?? 0 };
             if (card.key === 'students') return { ...card, value: statsRes.students ?? 0 };
@@ -327,7 +409,6 @@ async function loadDashboardBasic() {
             return card;
         });
 
-        // Donut trạng thái học sinh
         if (statsRes.studentStatusCounts) {
             const c = statsRes.studentStatusCounts;
             studentStatusData.value = {
@@ -340,32 +421,26 @@ async function loadDashboardBasic() {
                 ]
             };
         } else {
-            // fallback: chỉ cập nhật "Đang đi học" = tổng HS
             studentStatusData.value = {
                 ...studentStatusData.value,
-                datasets: [
-                    {
-                        ...studentStatusData.value.datasets[0],
-                        data: [statsRes.students ?? 0, 0, 0, 0, 0]
-                    }
-                ]
+                datasets: [{ ...studentStatusData.value.datasets[0], data: [statsRes.students ?? 0, 0, 0, 0, 0] }]
             };
         }
 
-        // Học sinh mới trong tháng ở block Hoạt động
         activities.value = activities.value.map((item) => {
-            if (item.key === 'newStudentsThisMonth') {
-                return { ...item, value: String(statsRes.newStudentsThisMonth ?? 0) };
-            }
+            if (item.key === 'newStudentsThisMonth') return { ...item, value: String(statsRes.newStudentsThisMonth ?? 0) };
             return item;
         });
 
-        // Sinh nhật tháng 10
-        birthdaysStudents.value = Array.from({ length: birthdayRes.students }, (_, i) => ({ id: i + 1 }));
-        birthdaysStaff.value = Array.from({ length: birthdayRes.staff }, (_, i) => ({ id: i + 100 }));
-
-        // Load thêm các khối khác (không ảnh hưởng tới stats cơ bản nếu lỗi)
-        await Promise.all([loadMenuActivity(), loadAttendanceSummaryForDashboard(), loadFeeSummaryForDashboard(), loadFeedbackReview()]);
+        await Promise.all([
+            loadMenuActivity(),
+            loadAttendanceSummaryForDashboard(),
+            loadFeeSummaryForDashboard(),
+            loadFeedbackReview(),
+            loadLeaveReview(),
+            loadAlbumReview(),
+            loadBirthdays()
+        ]);
     } catch (e) {
         console.error(e);
         errorMessage.value = e?.message || 'Không tải được dữ liệu trang chủ.';
@@ -375,18 +450,16 @@ async function loadDashboardBasic() {
 }
 
 /* ========== HANDLERS CLICK ========== */
-
 function handleActivityClick(item) {
-    if (item.routeName) {
-        router.push({ name: item.routeName });
-    }
+    if (item.routeName) router.push({ name: item.routeName });
+}
+function handleReviewClick(item) {
+    if (item.routeName) router.push({ name: item.routeName });
 }
 
-function handleReviewClick(item) {
-    if (item.routeName) {
-        router.push({ name: item.routeName });
-    }
-}
+watch(selectedFee, () => {
+    loadFeeSummaryForDashboard();
+});
 
 onMounted(() => {
     loadDashboardBasic();
@@ -507,7 +580,7 @@ onMounted(() => {
             </section>
         </div>
 
-        <!-- Cụm 3: Thu theo kỳ | Sinh nhật tháng 10 -->
+        <!-- Cụm 3: Thu theo kỳ | Sinh nhật -->
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <section class="rounded-2xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 p-6">
                 <header class="flex items-center justify-between mb-4">
@@ -515,7 +588,7 @@ onMounted(() => {
                         <i class="fa-solid fa-coins"></i>
                         Tình hình thực hiện thu theo kỳ
                     </h3>
-                    <div class="w-48">
+                    <div class="w-56">
                         <Dropdown v-model="selectedFee" :options="feeOptions" optionLabel="label" class="w-full" />
                     </div>
                 </header>
@@ -552,37 +625,62 @@ onMounted(() => {
                 <header class="flex items-center justify-between mb-4">
                     <h3 class="text-xl font-semibold flex items-center gap-2">
                         <i class="fa-solid fa-cake-candles"></i>
-                        Chúc mừng sinh nhật tháng 10
+                        Chúc mừng sinh nhật tháng {{ birthdayMonth }}
                     </h3>
                     <i class="fa-solid fa-arrow-right text-primary"></i>
                 </header>
 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-                    <!-- Hai hàng avatar -->
+                    <!-- Avatar list -->
                     <div class="md:col-span-2 grid grid-rows-2 gap-y-8">
-                        <!-- Hàng 1 -->
-                        <div class="flex flex-wrap gap-x-4 gap-y-4">
-                            <div v-for="s in birthdaysStudents" :key="s.id" class="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center">
-                                <i class="fa-solid fa-user text-blue-700"></i>
+                        <!-- Students -->
+                        <div>
+                            <div class="text-xs text-surface-500 mb-2">Học sinh</div>
+                            <div class="flex flex-wrap gap-x-3 gap-y-3">
+                                <div
+                                    v-for="s in birthdaysStudents"
+                                    :key="s.id"
+                                    class="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
+                                    :class="getAvatarClass(s.name)"
+                                    :title="`${s.name} - ${formatDobVi(s.dob)}`"
+                                >
+                                    {{ getAvatarText(s.name) }}
+                                </div>
+                                <span v-if="birthdayStudentsTotal > birthdaysStudents.length" class="text-xs text-surface-500 self-center">
+                                    +{{ birthdayStudentsTotal - birthdaysStudents.length }}
+                                </span>
                             </div>
                         </div>
-                        <!-- Hàng 2 -->
-                        <div class="flex flex-wrap gap-x-4 gap-y-4">
-                            <div v-for="s in birthdaysStaff" :key="s.id" class="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center">
-                                <i class="fa-solid fa-user text-blue-700"></i>
+
+                        <!-- Staff -->
+                        <div>
+                            <div class="text-xs text-surface-500 mb-2">Nhân viên</div>
+                            <div class="flex flex-wrap gap-x-3 gap-y-3">
+                                <div
+                                    v-for="s in birthdaysStaff"
+                                    :key="s.id"
+                                    class="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
+                                    :class="getAvatarClass(s.name)"
+                                    :title="`${s.name} - ${formatDobVi(s.dob)}`"
+                                >
+                                    {{ getAvatarText(s.name) }}
+                                </div>
+                                <span v-if="birthdayStaffTotal > birthdaysStaff.length" class="text-xs text-surface-500 self-center">
+                                    +{{ birthdayStaffTotal - birthdaysStaff.length }}
+                                </span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Tổng bên phải -->
+                    <!-- Totals -->
                     <div class="md:col-span-1 flex flex-col justify-start gap-8">
                         <div class="text-right">
                             <div class="text-surface-500">Học sinh:</div>
-                            <div class="text-lg font-semibold">{{ birthdaysStudents.length }}</div>
+                            <div class="text-lg font-semibold">{{ birthdayStudentsTotal }}</div>
                         </div>
                         <div class="text-right">
                             <div class="text-surface-500">Nhân viên:</div>
-                            <div class="text-lg font-semibold">{{ birthdaysStaff.length }}</div>
+                            <div class="text-lg font-semibold">{{ birthdayStaffTotal }}</div>
                         </div>
                     </div>
                 </div>

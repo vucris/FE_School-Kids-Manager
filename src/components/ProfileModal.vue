@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useAuthStore } from '@/stores/auth.js';
 
 const props = defineProps({
@@ -15,6 +15,33 @@ const auth = useAuthStore();
 
 // Lấy thông tin user từ store
 const user = computed(() => auth.user || {});
+
+// trạng thái edit
+const editing = ref(false);
+const saving = ref(false);
+
+// form edit cơ bản
+const editForm = ref({
+    fullName: '',
+    email: '',
+    phone: '',
+    avatar: ''
+});
+
+// đồng bộ form mỗi khi user thay đổi
+watch(
+    user,
+    (u) => {
+        const val = u || {};
+        editForm.value = {
+            fullName: val.fullName || '',
+            email: val.email || '',
+            phone: val.phone || '',
+            avatar: val.avatar || val.avatarUrl || ''
+        };
+    },
+    { immediate: true }
+);
 
 // Format ngày tháng
 function formatDate(dateString) {
@@ -41,12 +68,47 @@ function getInitials(name) {
 }
 
 function closeModal() {
+    editing.value = false;
     emit('close');
 }
 
 function onOverlayClick(event) {
     if (event.target === event.currentTarget) {
         closeModal();
+    }
+}
+
+function startEdit() {
+    editing.value = true;
+}
+
+function cancelEdit() {
+    // reset form về dữ liệu user hiện tại
+    const val = user.value || {};
+    editForm.value = {
+        fullName: val.fullName || '',
+        email: val.email || '',
+        phone: val.phone || '',
+        avatar: val.avatar || val.avatarUrl || ''
+    };
+    editing.value = false;
+}
+
+async function saveProfile() {
+    try {
+        saving.value = true;
+        await auth.updateProfileBasic({
+            fullName: editForm.value.fullName,
+            email: editForm.value.email,
+            phone: editForm.value.phone,
+            avatar: editForm.value.avatar
+        });
+        editing.value = false;
+    } catch (e) {
+        console.error('Update profile error', e?.response?.data || e.message);
+        alert('Cập nhật hồ sơ thất bại. Vui lòng thử lại.');
+    } finally {
+        saving.value = false;
     }
 }
 </script>
@@ -92,6 +154,19 @@ function onOverlayClick(event) {
                             </h3>
 
                             <div class="info-grid">
+                                <!-- Họ và tên -->
+                                <div class="info-item">
+                                    <div class="info-icon">
+                                        <i class="pi pi-id-card"></i>
+                                    </div>
+                                    <div class="info-content">
+                                        <span class="info-label">Họ và tên</span>
+                                        <span v-if="!editing" class="info-value">{{ user.fullName || 'Chưa cập nhật' }}</span>
+                                        <input v-else v-model="editForm.fullName" type="text" class="info-input" placeholder="Nhập họ và tên" />
+                                    </div>
+                                </div>
+
+                                <!-- Tên đăng nhập (chỉ đọc) -->
                                 <div class="info-item">
                                     <div class="info-icon">
                                         <i class="pi pi-at"></i>
@@ -102,26 +177,31 @@ function onOverlayClick(event) {
                                     </div>
                                 </div>
 
+                                <!-- Email -->
                                 <div class="info-item">
                                     <div class="info-icon">
                                         <i class="pi pi-envelope"></i>
                                     </div>
                                     <div class="info-content">
                                         <span class="info-label">Email</span>
-                                        <span class="info-value">{{ user.email || 'Chưa cập nhật' }}</span>
+                                        <span v-if="!editing" class="info-value">{{ user.email || 'Chưa cập nhật' }}</span>
+                                        <input v-else v-model="editForm.email" type="email" class="info-input" placeholder="Nhập email" />
                                     </div>
                                 </div>
 
+                                <!-- Số điện thoại -->
                                 <div class="info-item">
                                     <div class="info-icon">
                                         <i class="pi pi-phone"></i>
                                     </div>
                                     <div class="info-content">
                                         <span class="info-label">Số điện thoại</span>
-                                        <span class="info-value">{{ user.phone || 'Chưa cập nhật' }}</span>
+                                        <span v-if="!editing" class="info-value">{{ user.phone || 'Chưa cập nhật' }}</span>
+                                        <input v-else v-model="editForm.phone" type="tel" class="info-input" placeholder="Nhập số điện thoại" />
                                     </div>
                                 </div>
 
+                                <!-- Ngày tham gia (chỉ đọc) -->
                                 <div class="info-item">
                                     <div class="info-icon">
                                         <i class="pi pi-calendar"></i>
@@ -129,16 +209,6 @@ function onOverlayClick(event) {
                                     <div class="info-content">
                                         <span class="info-label">Ngày tham gia</span>
                                         <span class="info-value">{{ formatDate(user.createdAt) }}</span>
-                                    </div>
-                                </div>
-
-                                <div class="info-item">
-                                    <div class="info-icon">
-                                        <i class="pi pi-clock"></i>
-                                    </div>
-                                    <div class="info-content">
-                                        <span class="info-label">Đăng nhập lần cuối</span>
-                                        <span class="info-value">{{ formatDate(user.lastLogin) }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -170,14 +240,20 @@ function onOverlayClick(event) {
 
                     <!-- Footer với buttons đẹp -->
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" @click="closeModal">
+                        <button class="btn btn-secondary" @click="editing ? cancelEdit() : closeModal()">
                             <i class="pi pi-times"></i>
-                            Đóng
+                            {{ editing ? 'Hủy' : 'Đóng' }}
                         </button>
-                        <router-link to="/profile/edit" class="btn btn-primary" @click="closeModal">
+
+                        <button v-if="!editing" class="btn btn-primary" @click="startEdit">
                             <i class="pi pi-pencil"></i>
                             Chỉnh sửa hồ sơ
-                        </router-link>
+                        </button>
+
+                        <button v-else class="btn btn-primary" :disabled="saving" @click="saveProfile">
+                            <i class="pi" :class="saving ? 'pi-spin pi-spin pi-spinner' : 'pi-check'"></i>
+                            {{ saving ? 'Đang lưu...' : 'Lưu thay đổi' }}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -378,6 +454,22 @@ function onOverlayClick(event) {
     font-weight: 600;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.info-input {
+    width: 100%;
+    padding: 0.45rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--surface-border, #d1d5db);
+    font-size: 0.95rem;
+    color: var(--text-color, #111827);
+    background: #ffffff;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.info-input:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
 }
 
 /* Body với smooth scroll */

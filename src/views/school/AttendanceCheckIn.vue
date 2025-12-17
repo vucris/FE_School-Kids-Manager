@@ -17,7 +17,6 @@ import { fetchClassesLite } from '@/service/classService.js';
 import { fetchAttendanceList, bulkUpdateAttendance } from '@/service/attendanceService.js';
 import { useAuthStore } from '@/stores/auth.js';
 import { getUsernameFromUser, getCurrentUsername, fetchCurrentUsername } from '@/service/authService.js';
-
 import { fetchMyTeacherClasses } from '@/service/teacherService.js';
 
 /* Enum và cột hiển thị (KHỚP BE AttendanceStatus) */
@@ -68,7 +67,7 @@ const filterStatus = ref('ALL');
 /** loading: overlay */
 const loading = ref(false);
 const saving = ref(false);
-const rows = ref([]); // [{ studentId, studentName, className, status, hasPermission, checkedBy, checkTime, note }]
+const rows = ref([]); // [{ studentId, studentName, className, status, hasPermission, locked, checkedBy, checkTime, note }]
 const dirty = reactive(new Set()); // track các dòng thay đổi để lưu
 
 const counts = computed(() => {
@@ -122,6 +121,29 @@ async function loadClasses() {
     }
 }
 
+/* helper: row bị khoá do đơn xin nghỉ đã duyệt */
+function isLocked(row) {
+    return !!row.locked;
+}
+
+/* Nhận diện record sinh ra từ đơn xin nghỉ có phép dựa vào flag + ghi chú */
+function isFromLeaveRequest(r) {
+    if (!r) return false;
+
+    // Nếu sau này BE có flag riêng thì vẫn dùng được
+    if (r.fromLeaveRequest || r.lockedByLeave || r.leaveApproved) return true;
+
+    const noteRaw = (r.note || '').trim().toLowerCase();
+    if (!noteRaw) return false;
+
+    // Các prefix phổ biến, chỉnh lại cho đúng format BE của bạn
+    if (noteRaw.startsWith('nghỉ có phép')) return true;
+    if (noteRaw.startsWith('nghi co phep')) return true;
+    if (noteRaw.startsWith('đơn xin nghỉ')) return true;
+    if (noteRaw.startsWith('don xin nghi')) return true;
+
+    return false;
+}
 
 /** Tải danh sách điểm danh */
 async function loadData() {
@@ -136,11 +158,23 @@ async function loadData() {
             status: filterStatus.value === 'ALL' ? undefined : filterStatus.value,
             keyword: keyword.value || undefined
         });
-        rows.value = list.map((r) => ({
-            ...r,
-            status: r.status || 'UNDEFINED',
-            hasPermission: r.hasPermission ?? false
-        }));
+
+        rows.value = (list || []).map((r) => {
+            const fromLeave = isFromLeaveRequest(r);
+
+            // Nếu là ngày nghỉ từ đơn xin nghỉ => tự động Vắng + Có phép
+            const status = fromLeave ? 'ABSENT' : (r.status || 'UNDEFINED');
+            const hasPermission = fromLeave ? true : (r.hasPermission ?? false);
+
+            return {
+                ...r,
+                status,
+                hasPermission,
+                // locked = true để không cho chỉnh tay & không gửi lên khi lưu
+                locked: fromLeave || !!r.locked
+            };
+        });
+
         swalToast.fire({ icon: 'success', title: 'Đã tải dữ liệu' });
     } catch (e) {
         swalToast.fire({
@@ -165,6 +199,7 @@ const filteredRows = computed(() => {
 /* ====== LOGIC TRẠNG THÁI + CÓ PHÉP ====== */
 
 function setStatus(row, newStatus) {
+    if (isLocked(row)) return; // không cho chỉnh khi đã duyệt đơn xin nghỉ
     if (row.status === newStatus) return;
 
     row.status = newStatus;
@@ -182,6 +217,7 @@ function setStatus(row, newStatus) {
 /** bulk set = gán tất cả HS (đang lọc) sang 1 trạng thái */
 function bulkSet(newStatus) {
     for (const r of filteredRows.value) {
+        if (isLocked(r)) continue;
         if ((r.status || 'UNDEFINED') !== newStatus) {
             setStatus(r, newStatus);
         }
@@ -190,6 +226,8 @@ function bulkSet(newStatus) {
 
 /* Có phép: toggle + bulk – luôn đồng bộ với trạng thái */
 function togglePermission(row) {
+    if (isLocked(row)) return; // khoá khi đã duyệt đơn xin nghỉ
+
     const next = !row.hasPermission;
 
     if (next) {
@@ -207,6 +245,7 @@ function togglePermission(row) {
 
 function setAllPermission(on) {
     filteredRows.value.forEach((r) => {
+        if (isLocked(r)) return;
         if (on) {
             // Tất cả => VẮNG CÓ PHÉP
             r.status = 'ABSENT';
@@ -248,6 +287,7 @@ function onClickStatusMenu(key, action) {
     if (action === 'all') {
         // gán tất cả HS (đang lọc) sang trạng thái này
         filteredRows.value.forEach((r) => {
+            if (isLocked(r)) return;
             if ((r.status || 'UNDEFINED') !== key) {
                 setStatus(r, key);
             }
@@ -255,6 +295,7 @@ function onClickStatusMenu(key, action) {
     } else if (action === 'clear') {
         // chỉ những HS đang ở trạng thái này => về UNDEFINED và bỏ có phép
         filteredRows.value.forEach((r) => {
+            if (isLocked(r)) return;
             if ((r.status || 'UNDEFINED') === key) {
                 r.status = 'UNDEFINED';
                 r.checkTime = null;
@@ -295,7 +336,10 @@ async function onSave() {
     }
     saving.value = true;
     try {
-        const dirtyRows = rows.value.filter((r) => dirty.has(r.studentId));
+        // chỉ gửi những dòng thay đổi và KHÔNG bị khoá
+        const dirtyRows = rows.value.filter(
+            (r) => dirty.has(r.studentId) && !isLocked(r)
+        );
         await bulkUpdateAttendance({
             classId: selectedClassId.value,
             date: day.value,
@@ -601,7 +645,15 @@ onBeforeUnmount(() => {
                                 <div class="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                                     <i class="fa-solid fa-user text-primary text-sm"></i>
                                 </div>
-                                {{ r.studentName }}
+                                <span>
+                                    {{ r.studentName }}
+                                    <span
+                                        v-if="isLocked(r)"
+                                        class="ml-2 text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-200"
+                                    >
+                                        Đơn nghỉ đã duyệt
+                                    </span>
+                                </span>
                             </div>
                         </td>
                         <td class="td text-slate-700">
@@ -612,9 +664,18 @@ onBeforeUnmount(() => {
                         <td v-for="col in statusCols" :key="col.key" class="td text-center">
                             <button
                                 class="dot animate-scale-on-hover"
-                                :class="[`dot-${col.color}`, (r.status || 'UNDEFINED') === col.key ? 'dot-active' : '']"
-                                @click="setStatus(r, col.key)"
-                                :title="`Đặt ${col.label}`"
+                                :class="[
+                                    `dot-${col.color}`,
+                                    (r.status || 'UNDEFINED') === col.key ? 'dot-active' : '',
+                                    isLocked(r) ? 'dot-locked' : ''
+                                ]"
+                                :disabled="isLocked(r)"
+                                @click="!isLocked(r) && setStatus(r, col.key)"
+                                :title="
+                                    isLocked(r)
+                                        ? 'Đã duyệt đơn xin nghỉ - không chỉnh sửa'
+                                        : `Đặt ${col.label}`
+                                "
                                 :aria-label="`Đặt trạng thái ${col.label} cho ${r.studentName}`"
                             />
                         </td>
@@ -622,10 +683,17 @@ onBeforeUnmount(() => {
                         <!-- Cột Có phép -->
                         <td class="td text-center">
                             <button
-                                v-tooltip.top="r.hasPermission ? 'Bỏ đánh dấu có phép' : 'Đánh dấu vắng có phép'"
+                                v-tooltip.top="
+                                    isLocked(r)
+                                        ? 'Đã duyệt đơn xin nghỉ - không chỉnh sửa'
+                                        : r.hasPermission
+                                        ? 'Bỏ đánh dấu có phép'
+                                        : 'Đánh dấu vắng có phép'
+                                "
                                 class="dot dot-purple animate-scale-on-hover"
-                                :class="{ 'dot-active': r.hasPermission }"
-                                @click.stop="togglePermission(r)"
+                                :class="{ 'dot-active': r.hasPermission, 'dot-locked': isLocked(r) }"
+                                :disabled="isLocked(r)"
+                                @click.stop="!isLocked(r) && togglePermission(r)"
                                 :aria-label="`Toggle có phép cho ${r.studentName}`"
                             />
                         </td>
@@ -633,7 +701,18 @@ onBeforeUnmount(() => {
                         <!-- Thời gian -->
                         <td class="td">
                             <div v-if="(r.status || 'UNDEFINED') !== 'UNDEFINED'" class="space-y-1">
-                                <Tag severity="success" value="Đã điểm danh" class="text-xs" />
+                                <Tag
+                                    v-if="isLocked(r)"
+                                    severity="info"
+                                    value="Từ đơn xin nghỉ"
+                                    class="text-xs"
+                                />
+                                <Tag
+                                    v-else
+                                    severity="success"
+                                    value="Đã điểm danh"
+                                    class="text-xs"
+                                />
                                 <div class="text-sm text-slate-600">
                                     <i class="fa-regular fa-clock mr-1"></i>
                                     {{ r.checkTime ? new Date(r.checkTime).toLocaleString('vi-VN') : '' }}
@@ -654,7 +733,8 @@ onBeforeUnmount(() => {
                                 v-model="r.note"
                                 class="w-full"
                                 placeholder="Ghi chú..."
-                                @input="dirty.add(r.studentId)"
+                                :disabled="isLocked(r)"
+                                @input="!isLocked(r) && dirty.add(r.studentId)"
                             />
                         </td>
                     </tr>
@@ -710,6 +790,11 @@ export default {
 @keyframes rotate {
     from { transform: rotate(0deg); }
     to { transform: rotate(180deg); }
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
 }
 
 .animate-fade-in { animation: fade-in 0.6s ease-out forwards; }
@@ -936,6 +1021,12 @@ export default {
 .dot-sky { color: #0ea5e9; }
 .dot-slate { color: #94a3b8; }
 .dot-purple { color: #8b5cf6; }
+
+/* Dòng bị khoá do đơn xin nghỉ */
+.dot-locked {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 
 /* Responsive */
 @media (max-width: 768px) {

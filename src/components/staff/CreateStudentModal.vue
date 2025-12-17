@@ -24,35 +24,35 @@ const visible = computed({
     set: (v) => emit('update:modelValue', v)
 });
 
+/**
+ * Nếu BE/DB bắt buộc phone/username/password/email khi tạo thủ công,
+ * bật TRUE để FE gửi "tối thiểu" nhưng vẫn ẩn UI.
+ * Khi BE đã tự sinh đầy đủ => đổi FALSE để payload sạch đúng chuẩn mầm non.
+ */
+const SEND_ACCOUNT_FIELDS = true;
+
+/** Giới tính: đồng bộ BE import (NAM/NỮ) để tránh mismatch */
 const genders = [
-    { label: 'Nam', value: 'MALE' },
-    { label: 'Nữ', value: 'FEMALE' }
+    { label: 'Nam', value: 'NAM' },
+    { label: 'Nữ', value: 'NỮ' }
 ];
 
-/* Form: vẫn giữ các field account để gửi cho BE, nhưng ẩn UI */
 const form = reactive({
     fullName: '',
-    gender: null,
-    dateOfBirth: null,
-    studentCode: '',
-    enrollmentDate: null,
+    gender: null, // 'NAM' | 'NỮ'
+    dateOfBirth: null, // Date
+    enrollmentDate: null, // DateTime (Date)
     address: '',
     healthNotes: '',
-    avatarUrl: '',
-    phone: '',
     classId: null,
-    parentId: null,
-    username: '',
-    email: '',
-    password: ''
+    parentId: null
 });
 
-/* Error: chỉ validate những thứ cần người dùng nhập (học sinh mầm non không đụng tới tài khoản) */
 const errors = reactive({
     fullName: '',
     gender: '',
     dateOfBirth: '',
-    studentCode: '',
+    enrollmentDate: '',
     classId: '',
     parentId: ''
 });
@@ -65,7 +65,6 @@ const remoteParentOptions = ref([]);
 const refLoading = reactive({ classes: false, parents: false });
 const refError = ref('');
 
-/* Option lớp / phụ huynh */
 const clsOptions = computed(() => (props.classOptions?.length ? props.classOptions : remoteClassOptions.value));
 const prOptions = computed(() => (props.parentOptions?.length ? props.parentOptions : remoteParentOptions.value));
 
@@ -78,58 +77,16 @@ watch(
     }
 );
 
-/* Helpers ngày giờ + gợi ý account ẩn */
-function toYMD(d) {
-    if (!(d instanceof Date) || isNaN(d)) return null;
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-}
-function toISODateTime(d) {
-    if (!(d instanceof Date) || isNaN(d)) return null;
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const HH = String(d.getHours()).padStart(2, '0');
-    const MM = String(d.getMinutes()).padStart(2, '0');
-    const SS = String(d.getSeconds()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}`;
-}
-function slugifyUsername(s) {
-    return String(s || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '')
-        .slice(0, 16);
-}
-function randomDigits(n = 3) {
-    return Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
-}
-function suggestUsername() {
-    const base = slugifyUsername(form.fullName);
-    if (!base) return '';
-    return base + randomDigits(3);
-}
-function suggestPassword() {
-    const tail = (form.studentCode || '').replace(/\D/g, '').slice(-4) || randomDigits(4);
-    return `Hs@${tail}`;
-}
-function suggestEmail() {
-    const code = (form.studentCode || '').toLowerCase() || `hs${randomDigits(6)}`;
-    return `${code}@school.local`;
-}
-
 async function loadReferenceData() {
     refError.value = '';
     const jobs = [];
+
     if (!props.classOptions?.length) {
         refLoading.classes = true;
         jobs.push(
             fetchClassOptions(props.year ? { year: props.year } : {})
                 .then((list) => {
-                    remoteClassOptions.value = list;
+                    remoteClassOptions.value = Array.isArray(list) ? list : [];
                 })
                 .catch((e) => {
                     refError.value = e?.message || 'Không tải được danh sách lớp.';
@@ -139,12 +96,13 @@ async function loadReferenceData() {
                 })
         );
     }
+
     if (!props.parentOptions?.length) {
         refLoading.parents = true;
         jobs.push(
             fetchParentOptionsLikeStudentService()
                 .then((list) => {
-                    remoteParentOptions.value = list;
+                    remoteParentOptions.value = Array.isArray(list) ? list : [];
                 })
                 .catch((e) => {
                     refError.value = e?.message || 'Không tải được danh sách phụ huynh.';
@@ -154,6 +112,7 @@ async function loadReferenceData() {
                 })
         );
     }
+
     await Promise.all(jobs);
 }
 
@@ -162,104 +121,99 @@ function resetForm() {
         fullName: '',
         gender: null,
         dateOfBirth: null,
-        studentCode: '',
-        enrollmentDate: null,
+        // default: “bây giờ” để khỏi phải chọn nếu không cần
+        enrollmentDate: new Date(),
         address: '',
         healthNotes: '',
-        avatarUrl: '',
-        phone: '',
         classId: null,
-        parentId: null,
-        username: '',
-        email: '',
-        password: ''
+        parentId: null
     });
     Object.keys(errors).forEach((k) => (errors[k] = ''));
     serverError.value = '';
     submitting.value = false;
 }
 
-/* Auto gợi ý code/username/password/email nhưng ẩn khỏi UI */
-watch(
-    () => form.fullName,
-    () => {
-        if (!props.autoSuggest) return;
-        if (form.fullName && !form.studentCode) {
-            form.studentCode = 'HS' + Date.now().toString().slice(-6);
-        }
-        if (form.fullName && !form.username) {
-            form.username = suggestUsername();
-        }
-        if (!form.password) {
-            form.password = suggestPassword();
-        }
-        if (!form.email) {
-            form.email = suggestEmail();
-        }
-    }
-);
-watch(
-    () => form.studentCode,
-    () => {
-        if (!props.autoSuggest) return;
-        if (!form.username) form.username = suggestUsername();
-        if (!form.password) form.password = suggestPassword();
-        if (!form.email) form.email = suggestEmail();
-    }
-);
+/* Helpers */
+function toYMD(d) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+function toISODateTime(d) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const HH = String(d.getHours()).padStart(2, '0');
+    const MM = String(d.getMinutes()).padStart(2, '0');
+    const SS = String(d.getSeconds()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${HH}:${MM}:${SS}`;
+}
 
-/* Validate: chỉ kiểm tra phần thông tin cần nhập cho mầm non */
+function safeUsername() {
+    return `hs${Date.now().toString().slice(-9)}`;
+}
+function safePassword() {
+    return 'Student@123';
+}
+function safeEmail(username) {
+    return `${username}@kindergarten.edu.vn`;
+}
+function generateVietnamPhoneUniqueish() {
+    const tail = Date.now().toString().slice(-8);
+    return `09${tail}`;
+}
+
+/* Validate */
 function validate() {
-    errors.fullName = form.fullName.trim() ? '' : 'Bắt buộc';
-    errors.gender = form.gender ? '' : 'Bắt buộc';
-    errors.dateOfBirth = form.dateOfBirth ? '' : 'Bắt buộc';
-    errors.studentCode = form.studentCode.trim() ? '' : 'Bắt buộc';
-    errors.classId = form.classId ? '' : 'Bắt buộc';
-    errors.parentId = form.parentId ? '' : 'Bắt buộc';
+    errors.fullName = form.fullName.trim() ? '' : 'Vui lòng nhập họ và tên';
+    errors.gender = form.gender ? '' : 'Vui lòng chọn giới tính';
+    errors.dateOfBirth = form.dateOfBirth ? '' : 'Vui lòng chọn ngày sinh';
+
+    // “Ngày nhập học” để lại trong UI, nhưng không bắt buộc
+    errors.enrollmentDate = '';
+
+    errors.classId = form.classId ? '' : 'Vui lòng chọn lớp';
+    errors.parentId = form.parentId ? '' : 'Vui lòng chọn phụ huynh';
 
     return !Object.values(errors).some(Boolean);
 }
 
 async function onSubmit() {
     serverError.value = '';
-
-    // đảm bảo luôn có mã HS + account ẩn trước khi validate / gửi
-    if (!form.studentCode) {
-        form.studentCode = 'HS' + Date.now().toString().slice(-6);
-    }
-    if (!form.username) {
-        form.username = suggestUsername() || `hs${randomDigits(5)}`;
-    }
-    if (!form.password) {
-        form.password = suggestPassword();
-    }
-    if (!form.email) {
-        form.email = suggestEmail();
-    }
-
     if (!validate()) return;
 
     submitting.value = true;
 
     const payload = {
-        // account ẩn – chỉ phục vụ BE, học sinh mầm non không dùng để đăng nhập
-        username: form.username.trim(),
-        email: form.email?.trim() || null,
-        password: form.password.trim(),
-
-        // thông tin học sinh
         fullName: form.fullName.trim(),
-        phone: form.phone?.trim() || null,
-        gender: form.gender, // 'MALE' | 'FEMALE'
+        gender: form.gender, // 'NAM' | 'NỮ'
         dateOfBirth: toYMD(form.dateOfBirth), // yyyy-MM-dd
-        avatarUrl: form.avatarUrl || null,
-        studentCode: form.studentCode.trim(),
+
+        // giữ ngày nhập học
+        // BE: enrollmentDate là LocalDateTime => gửi ISO "yyyy-MM-ddTHH:mm:ss"
         enrollmentDate: form.enrollmentDate ? toISODateTime(form.enrollmentDate) : null,
-        healthNotes: form.healthNotes || null,
-        address: form.address || null,
+
+        address: form.address?.trim() || null,
+        healthNotes: form.healthNotes?.trim() || null,
         classId: Number(form.classId),
         parentId: Number(form.parentId)
     };
+
+    if (SEND_ACCOUNT_FIELDS) {
+        const username = safeUsername();
+        payload.username = username;
+        payload.password = safePassword();
+        payload.email = safeEmail(username);
+
+        // SĐT học sinh: tự sinh để không bị lỗi "bắt buộc"
+        payload.phone = generateVietnamPhoneUniqueish();
+
+        payload.studentCode = null;
+        payload.avatarUrl = null;
+    }
 
     try {
         const created = await createStudent(payload);
@@ -274,123 +228,149 @@ async function onSubmit() {
 </script>
 
 <template>
-    <Dialog v-model:visible="visible" modal :draggable="false" :style="{ width: '820px', maxWidth: '95vw' }">
+    <Dialog v-model:visible="visible" modal :draggable="false" :style="{ width: '760px', maxWidth: '95vw' }">
         <template #header>
-            <div class="text-lg font-semibold text-slate-800">Tạo học sinh</div>
+            <div class="header">
+                <div class="header__icon">
+                    <i class="fa-solid fa-user-plus"></i>
+                </div>
+                <div>
+                    <div class="header__title">Thêm học sinh</div>
+                    <div class="header__sub">Nhập thông tin cơ bản cho học sinh mầm non</div>
+                </div>
+            </div>
         </template>
 
-        <!-- THÔNG TIN HỌC SINH -->
-        <div class="section">
-            <div class="section__title">Thông tin học sinh</div>
+        <div class="card">
+            <div class="card__title">Thông tin học sinh</div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                    <label class="label"> Họ và tên <span class="req">*</span> </label>
-                    <InputText v-model="form.fullName" class="w-full" :class="{ 'p-invalid': !!errors.fullName }" />
+                <div class="field">
+                    <label class="label">Họ và tên <span class="req">*</span></label>
+                    <InputText v-model="form.fullName" class="w-full" placeholder="Ví dụ: Nguyễn Thị A" :class="{ 'p-invalid': !!errors.fullName }" />
                     <small v-if="errors.fullName" class="error">{{ errors.fullName }}</small>
                 </div>
 
-                <div>
-                    <label class="label"> Giới tính <span class="req">*</span> </label>
+                <div class="field">
+                    <label class="label">Giới tính <span class="req">*</span></label>
                     <Dropdown v-model="form.gender" :options="genders" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn giới tính" :class="{ 'p-invalid': !!errors.gender }" />
                     <small v-if="errors.gender" class="error">{{ errors.gender }}</small>
                 </div>
 
-                <div>
-                    <label class="label"> Ngày sinh <span class="req">*</span> </label>
-                    <Calendar v-model="form.dateOfBirth" class="w-full" dateFormat="dd/mm/yy" placeholder="dd/mm/yyyy" :class="{ 'p-invalid': !!errors.dateOfBirth }" />
+                <div class="field">
+                    <label class="label">Ngày sinh <span class="req">*</span></label>
+                    <Calendar v-model="form.dateOfBirth" class="w-full" dateFormat="dd/mm/yy" placeholder="dd/mm/yyyy" showIcon :class="{ 'p-invalid': !!errors.dateOfBirth }" />
                     <small v-if="errors.dateOfBirth" class="error">{{ errors.dateOfBirth }}</small>
                 </div>
 
-                <div>
-                    <label class="label"> Mã học sinh <span class="req">*</span> </label>
-                    <InputText v-model="form.studentCode" class="w-full" :class="{ 'p-invalid': !!errors.studentCode }" placeholder="HS0007" />
-                    <small v-if="errors.studentCode" class="error">{{ errors.studentCode }}</small>
-                    <small class="hint">Không nhập cũng được, hệ thống sẽ tự sinh mã.</small>
-                </div>
-
-                <div>
+                <div class="field">
                     <label class="label">Ngày nhập học</label>
-                    <Calendar v-model="form.enrollmentDate" class="w-full" showTime hourFormat="24" placeholder="yyyy-MM-dd HH:mm" />
+                    <Calendar v-model="form.enrollmentDate" class="w-full" showTime hourFormat="24" dateFormat="dd/mm/yy" placeholder="dd/mm/yyyy HH:mm" />
+                    <small class="hint">Nếu bỏ trống, hệ thống sẽ lấy thời điểm hiện tại.</small>
                 </div>
 
-                <div>
-                    <label class="label">Số điện thoại</label>
-                    <InputText v-model="form.phone" class="w-full" placeholder="0987xxxxxx" />
-                </div>
-
-                <div class="md:col-span-2">
+                <div class="field md:col-span-2">
                     <label class="label">Địa chỉ</label>
-                    <InputText v-model="form.address" class="w-full" placeholder="Địa chỉ" />
+                    <InputText v-model="form.address" class="w-full" placeholder="Ví dụ: 123 Đường ABC, Phường..., Quận..." />
                 </div>
 
-                <div class="md:col-span-2">
+                <div class="field md:col-span-2">
                     <label class="label">Ghi chú sức khỏe</label>
-                    <Textarea v-model="form.healthNotes" class="w-full" autoResize rows="2" placeholder="Dị ứng, tiền sử bệnh..." />
-                </div>
-
-                <div class="md:col-span-2">
-                    <label class="label">Avatar URL</label>
-                    <InputText v-model="form.avatarUrl" class="w-full" placeholder="https://example.com/avatar.png" />
+                    <Textarea v-model="form.healthNotes" class="w-full" autoResize rows="2" placeholder="Ví dụ: dị ứng sữa, hen suyễn..." />
                 </div>
             </div>
         </div>
 
-        <!-- LIÊN KẾT LỚP & PHỤ HUYNH -->
-        <div class="section">
-            <div class="section__title">Liên kết lớp & phụ huynh</div>
+        <div class="card">
+            <div class="card__title">Liên kết lớp & phụ huynh</div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                    <label class="label"> Lớp <span class="req">*</span> </label>
-                    <Dropdown v-model="form.classId" :options="clsOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" :class="{ 'p-invalid': !!errors.classId }" :filter="true" showClear />
+                <div class="field">
+                    <label class="label">Lớp <span class="req">*</span></label>
+                    <Dropdown v-model="form.classId" :options="clsOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn lớp" :filter="true" showClear :class="{ 'p-invalid': !!errors.classId }" />
                     <small v-if="errors.classId" class="error">{{ errors.classId }}</small>
                     <small v-if="refLoading.classes" class="hint">Đang tải danh sách lớp...</small>
                     <small v-else-if="!refLoading.classes && !clsOptions.length" class="error">Không có dữ liệu lớp</small>
                 </div>
 
-                <div>
-                    <label class="label"> Phụ huynh <span class="req">*</span> </label>
-                    <Dropdown v-model="form.parentId" :options="prOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn phụ huynh" :class="{ 'p-invalid': !!errors.parentId }" :filter="true" showClear />
+                <div class="field">
+                    <label class="label">Phụ huynh <span class="req">*</span></label>
+                    <Dropdown v-model="form.parentId" :options="prOptions" optionLabel="label" optionValue="value" class="w-full" placeholder="Chọn phụ huynh" :filter="true" showClear :class="{ 'p-invalid': !!errors.parentId }" />
                     <small v-if="errors.parentId" class="error">{{ errors.parentId }}</small>
                     <small v-if="refLoading.parents" class="hint">Đang tải danh sách phụ huynh...</small>
                     <small v-else-if="!refLoading.parents && !prOptions.length" class="error">Không có dữ liệu phụ huynh</small>
                 </div>
             </div>
 
-            <div v-if="refError" class="mt-2 text-sm text-rose-600 font-medium">
-                {{ refError }}
+            <div v-if="refError" class="alert alert--warn">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span>{{ refError }}</span>
             </div>
 
-            <p class="hint mt-2">Tài khoản đăng nhập sẽ do phụ huynh sử dụng. Tài khoản nội bộ của học sinh được hệ thống tự sinh và <b>không hiển thị</b> ở đây.</p>
+            <p class="hint mt-2">Phụ huynh sẽ là người sử dụng ứng dụng để theo dõi học sinh.</p>
         </div>
 
-        <div v-if="serverError" class="mt-2 text-sm text-rose-600 font-medium">
-            {{ serverError }}
+        <div v-if="serverError" class="alert alert--error">
+            <i class="fa-solid fa-circle-xmark"></i>
+            <span>{{ serverError }}</span>
         </div>
 
         <template #footer>
-            <div class="flex items-center justify-end gap-2 w-full">
-                <Button label="Đóng" class="!bg-slate-200 !text-slate-800 !border-0" :disabled="submitting" @click="visible = false" />
-                <Button :label="submitting ? 'Đang tạo...' : 'Tạo học sinh'" class="!bg-primary !border-0 !text-white" :disabled="submitting" @click="onSubmit" />
+            <div class="footer">
+                <Button label="Đóng" class="p-button-text" :disabled="submitting" @click="visible = false" />
+                <Button :label="submitting ? 'Đang tạo...' : 'Thêm học sinh'" class="!bg-primary !border-0 !text-white" :disabled="submitting" @click="onSubmit" />
             </div>
         </template>
     </Dialog>
 </template>
 
 <style scoped>
-.section {
-    margin-top: 14px;
+.header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
 }
-.section__title {
-    margin: 4px 0 10px;
-    font-weight: 700;
+.header__icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.header__title {
+    font-size: 1.1rem;
+    font-weight: 800;
     color: #0f172a;
+    line-height: 1.2;
 }
-.label {
+.header__sub {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.card {
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px;
+    margin-top: 12px;
+}
+.card__title {
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 10px;
+    font-size: 0.95rem;
+}
+
+.field .label {
     display: inline-block;
     margin-bottom: 6px;
-    font-weight: 600;
+    font-weight: 700;
     color: #334155;
-    font-size: 0.93rem;
+    font-size: 0.9rem;
 }
 .req {
     color: #ef4444;
@@ -403,8 +383,43 @@ async function onSubmit() {
     color: #64748b;
     font-size: 0.78rem;
 }
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 10px 12px;
+    border-radius: 12px;
+    margin-top: 10px;
+    font-size: 0.875rem;
+    border: 1px solid transparent;
+}
+.alert--info {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+.alert--warn {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+}
+.alert--error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #dc2626;
+}
+
+.footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    width: 100%;
+}
+
 :deep(.p-inputtext.p-invalid),
-:deep(.p-dropdown.p-invalid .p-dropdown-label) {
-    border-color: #ef4444;
+:deep(.p-dropdown.p-invalid .p-dropdown-label),
+:deep(.p-calendar.p-invalid input) {
+    border-color: #ef4444 !important;
 }
 </style>

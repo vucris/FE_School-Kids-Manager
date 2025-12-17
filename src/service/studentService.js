@@ -56,21 +56,12 @@ async function loadParentsAllToCache() {
     try {
         const url = withApiV1('/parents/all');
         const res = await http.get(url);
-        const raw = Array.isArray(res?.data?.data)
-            ? res.data.data
-            : Array.isArray(res?.data)
-            ? res.data
-            : [];
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
         for (const p of raw) {
             const id = p.id ?? p.parentId;
             if (id == null) continue;
             const fullName = p.fullName || p.username || p.name || `PH ${id}`;
-            const phone =
-                p.phone ||
-                p.parentPhone ||
-                p.additionalPhone ||
-                p.additional_phone ||
-                '';
+            const phone = p.phone || p.parentPhone || p.additionalPhone || p.additional_phone || '';
             const email = p.email || '';
             parentCache.map.set(Number(id), { fullName, phone, email });
         }
@@ -110,41 +101,44 @@ async function enrichStudentsWithParents(items) {
     return items;
 }
 
+/* ---------------- Map status BE -> status FE (tabs) ---------------- */
+function mapStatusFromBackend(s) {
+    const raw = String(s?.currentStatus || s?.status || '').toUpperCase();
+
+    switch (raw) {
+        case 'STUDYING':
+            return 'studying';
+        case 'GRADUATED':
+            return 'graduated';
+        case 'RESERVED':
+            return 'reserved';
+        case 'DROPOUT':
+            return 'dropped';
+        case 'TRANSFERRED':
+            // tuỳ bạn: có thể tạo tab riêng "transferred"
+            return 'dropped';
+        default:
+            return raw ? raw.toLowerCase() : 'studying';
+    }
+}
+
 /* ---------------- Map từ BE -> model bảng ---------------- */
 function mapStudentRow(s) {
     const classObj = s.clazz || s.classroom || s.classes || s.class || {};
 
-    const classId =
-        s.classId ??
-        s.class_id ??
-        classObj.id ??
-        classObj.classId ??
-        classObj.class_id ??
-        classObj.classroomId ??
-        null;
+    const classId = s.classId ?? s.class_id ?? classObj.id ?? classObj.classId ?? classObj.class_id ?? classObj.classroomId ?? null;
 
-    const className =
-        s.className ||
-        classObj.className ||
-        classObj.name ||
-        classObj.class_code ||
-        '';
+    const className = s.className || classObj.className || classObj.name || classObj.class_code || '';
 
     const parentId = s.parentId ?? s.parent_id ?? s.parent?.id ?? null;
     const parentName = s.parentName || s.parent?.fullName || s.parent?.name || '';
     const parentPhone = s.parentPhone || s.parent?.phone || s.parent?.parentPhone || '';
 
-    const code =
-        s.studentCode ||
-        s.code ||
-        s.student_code ||
-        '';
+    const code = s.studentCode || s.code || s.student_code || '';
 
-    const dob =
-        s.dateOfBirth ||
-        s.date_of_birth ||
-        s.dob ||
-        '';
+    const dob = s.dateOfBirth || s.date_of_birth || s.dob || '';
+
+    const feStatus = mapStatusFromBackend(s);
 
     return {
         // id học sinh
@@ -166,7 +160,13 @@ function mapStudentRow(s) {
         parentId,
         parentName,
         parentPhone,
-        status: s.status || 'studying',
+
+        // status FE – dùng cho tabs
+        status: feStatus,
+        // giữ thêm raw & displayName nếu BE trả
+        currentStatusRaw: s.currentStatus || s.status || null,
+        statusDisplayName: s.statusDisplayName || '',
+
         username: s.username,
         email: s.email,
         phone: s.phone,
@@ -177,16 +177,14 @@ function mapStudentRow(s) {
     };
 }
 
-/* ---------------- API create đơn lẻ (POST /students/create) ---------------- */
+/* ---------------- API create đơn lẻ (POST /students) ---------------- */
 export async function createStudent(payload) {
     try {
-        const url = withApiV1('/students/create');
+        const url = withApiV1('/students'); // BE mới: @PostMapping /students
         const res = await http.post(url, payload);
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(
-            err?.response?.data?.message || err?.message || 'Tạo học sinh thất bại'
-        );
+        throw new Error(err?.response?.data?.message || err?.message || 'Tạo học sinh thất bại');
     }
 }
 
@@ -198,20 +196,15 @@ export async function getStudentById(id) {
         const res = await http.get(url);
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(
-            err?.response?.data?.message ||
-                err?.response?.data?.error ||
-                err?.message ||
-                'Không lấy được thông tin học sinh'
-        );
+        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Không lấy được thông tin học sinh');
     }
 }
 
-/* Cập nhật học sinh (PUT /students/update/{id}) */
+/* Cập nhật học sinh (PUT /students/{id}) */
 export async function updateStudent(id, payload) {
     if (!id) throw new Error('Thiếu id học sinh');
     try {
-        const url = withApiV1(`/students/update/${id}`);
+        const url = withApiV1(`/students/${id}`); // BE mới: @PutMapping("/{id}")
         const res = await http.put(url, payload, {
             headers: {
                 'Content-Type': 'application/json',
@@ -220,30 +213,19 @@ export async function updateStudent(id, payload) {
         });
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(
-            err?.response?.data?.message ||
-                err?.response?.data?.error ||
-                err?.message ||
-                'Cập nhật học sinh thất bại'
-        );
+        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Cập nhật học sinh thất bại');
     }
 }
 
 /* ---------------- Lỗi ---------------- */
 function extractErrorMessage(err, fallback = 'Lỗi không xác định') {
-    return (
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        err?.message ||
-        fallback
-    );
+    return err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
 }
 
 /* ---------------- Lọc/sort/paginate FE-side ---------------- */
 function applyFiltersSortPaginate(list, params = {}) {
     let items = [...list];
-    if (params.status && params.status !== 'all')
-        items = items.filter((x) => x.status === params.status);
+    if (params.status && params.status !== 'all') items = items.filter((x) => x.status === params.status);
     if (params.code) {
         const q = params.code.trim().toLowerCase();
         items = items.filter((x) => (x.code || '').toLowerCase().includes(q));
@@ -282,19 +264,14 @@ function applyFiltersSortPaginate(list, params = {}) {
     return { items, total };
 }
 
-/* ---------------- GET /students/all (FE-side filter) ---------------- */
-// studentService.js
+/* ---------------- GET /students (FE-side filter & paginate) ---------------- */
 export async function fetchStudents(params = {}, options = {}) {
     const { skipParentEnrich = false } = options;
 
     try {
-        const url = withApiV1('/students/all');
+        const url = withApiV1('/students'); // BE mới: @GetMapping("/students")
         const res = await http.get(url);
-        const raw = Array.isArray(res?.data?.data)
-            ? res.data.data
-            : Array.isArray(res?.data)
-            ? res.data
-            : [];
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
 
         let mapped = raw.map(mapStudentRow);
 
@@ -304,30 +281,32 @@ export async function fetchStudents(params = {}, options = {}) {
 
         return applyFiltersSortPaginate(mapped, params);
     } catch (err) {
-        throw new Error(
-            extractErrorMessage(err, 'Không thể tải danh sách học sinh')
-        );
+        throw new Error(extractErrorMessage(err, 'Không thể tải danh sách học sinh'));
     }
 }
 
-
-
-/* Lấy toàn bộ học sinh theo lớp (dùng cho màn Hồ sơ sức khỏe – hiển thị hết, kể cả chưa có dữ liệu y tế) */
+/* ---------------- Lấy HS theo lớp trực tiếp từ BE (GET /students/class/{classId}) ---------------- */
 export async function fetchStudentsByClass(classId) {
     if (!classId) return [];
-    const { items } = await fetchStudents({ page: 1, size: 10000, status: 'all' });
+    try {
+        const url = withApiV1(`/students/class/${classId}`);
+        const res = await http.get(url);
 
-    const target = Number(classId);
-    return items.filter(
-        (s) => s.classId != null && Number(s.classId) === target
-    );
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+
+        let mapped = raw.map(mapStudentRow);
+        mapped = await enrichStudentsWithParents(mapped);
+        return mapped;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Không lấy được danh sách học sinh theo lớp'));
+    }
 }
 
-/* ---------------- Import qua BE: POST /api/v1/students/import (multipart 'file') ---------------- */
+/* ---------------- Import qua BE: POST /api/v1/students/import/excel (multipart 'file') ---------------- */
 export async function importStudentsExcel(file, { onProgress, signal } = {}) {
     if (!file) throw new Error('Thiếu file import');
 
-    const endpoint = withApiV1('/students/import');
+    const endpoint = withApiV1('/students/import/excel'); // BE mới
     const form = new FormData();
     form.append('file', file);
 
@@ -350,52 +329,39 @@ export async function importStudentsExcel(file, { onProgress, signal } = {}) {
     }
 }
 
-/* ---------------- Tải template import ---------------- */
-export async function downloadStudentsImportTemplate() {
-    const header = [
-        'Tên đăng nhập',
-        'Mật khẩu',
-        'Họ và tên học sinh',
-        'Email học sinh',
-        'Số điện thoại học sinh',
-        'Giới tính (Nam/Nữ)',
-        'Ngày sinh (dd-MM-yyyy)',
-        'Địa chỉ',
-        'Ghi chú sức khỏe',
-        'Mã lớp (class_code)',
-        'Số điện thoại phụ huynh'
-    ];
+/* ---------------- Tải template import (FE tự sinh) ---------------- */
+// ✅ Tải template import từ Backend (đúng BE: GET /students/import-template)
+export async function downloadStudentsImportTemplateFromBackend() {
+    try {
+        const url = withApiV1('/students/import-template');
 
-    const demoRow = [
-        'DEMO_KHONG_LUU',
-        '123456',
-        'Ví dụ mẫu - KHÔNG LƯU',
-        'demo@example.com',
-        '0900000000',
-        'Nam',
-        'dd-MM-yyyy (ví dụ: 01-09-2017)',
-        'Dòng này chỉ dùng minh hoạ',
-        'Có thể xoá dòng này trước khi import',
-        'MG5A',
-        '0999999999'
-    ];
+        const res = await http.get(url, { responseType: 'blob' });
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([header, demoRow]);
-    XLSX.utils.book_append_sheet(wb, ws, 'ImportStudents');
+        const blob = new Blob([res.data], {
+            type:
+                res.headers?.['content-type'] ||
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
 
-    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([wbout], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'mau_import_hoc_sinh.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+        const dlUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+
+        // lấy filename từ header nếu có
+        const cd = res.headers?.['content-disposition'] || '';
+        const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+
+        a.href = dlUrl;
+        a.download = m ? decodeURIComponent(m[1]) : 'Mau_nhap_hoc_sinh.xlsx';
+
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(dlUrl);
+
+        return true;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Tải file mẫu Excel thất bại'));
+    }
 }
 
 /* ---------------- Tải template từ BE (nếu có) ---------------- */
@@ -432,19 +398,13 @@ export async function exportStudentsExcel() {
         const dlUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const cd = res.headers['content-disposition'] || '';
-        const name =
-            (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx';
+        const name = (cd.match(/filename="?([^"]+)"?/i) || [])[1] || 'students.xlsx';
         theDownload(a, dlUrl, name);
     } catch (err) {
         // fallback CSV
         const { items } = await fetchStudents({ page: 1, size: 10000 });
         const header = 'code,name,className,parentName\n';
-        const rows = items
-            .map(
-                (r) =>
-                    `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`
-            )
-            .join('\n');
+        const rows = items.map((r) => `${csv(r.code)},${csv(r.name)},${csv(r.className)},${csv(r.parentName)}`).join('\n');
         const BOM = new Uint8Array([0xef, 0xbb, 0xbf]);
         const blob = new Blob([BOM, header + rows], {
             type: 'text/csv;charset=utf-8;'
@@ -472,6 +432,8 @@ function csv(v) {
 }
 
 /* ---------------- DELETE (thử nhiều endpoint) ---------------- */
+
+
 async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {}) {
     try {
         const res = await http.delete(withApiV1(url), {
@@ -487,29 +449,29 @@ async function tryDelete(url, { timeoutMs = 12000, withCredentials = false } = {
             err?.response?.data?.error ||
             err?.response?.data?.detail ||
             err?.message;
+
         const isTimeout =
             err?.code === 'ECONNABORTED' ||
-            String(err?.message || '')
-                .toLowerCase()
-                .includes('timeout');
+            String(err?.message || '').toLowerCase().includes('timeout');
+
         const message = isTimeout ? 'TIMEOUT' : bodyMsg || 'Request failed';
         return { ok: false, status, message };
     }
 }
 
-export async function deleteStudent(
-    id,
-    { timeoutMs = 12000, withCredentials = false } = {}
-) {
+export async function deleteStudent(id, { timeoutMs = 12000, withCredentials = false } = {}) {
     if (!id) throw new Error('Thiếu id học sinh');
 
-    const candidates = [`/students/delete/${id}`, `/students/${id}`];
+    // ✅ BE mới: @DeleteMapping("/{id}") => /students/{id}
+    // Nếu bạn vẫn muốn fallback endpoint cũ thì để thêm vào sau
+    const candidates = [`/students/${id}`];
 
     let lastErr;
     for (const path of candidates) {
         const r = await tryDelete(path, { timeoutMs, withCredentials });
         if (r.ok) return true;
 
+        // Với BE hiện tại: 404/405/400 là fail chắc (không retry endpoint khác vì chỉ có 1)
         if (r.status === 404 || r.status === 405 || r.status === 400) {
             lastErr = new Error(`Xóa thất bại (${r.status}) tại ${path}`);
             continue;
@@ -522,13 +484,12 @@ export async function deleteStudent(
         throw new Error(msg);
     }
 
-    throw lastErr || new Error('Xóa học sinh thất bại (không có endpoint phù hợp)');
+    throw lastErr || new Error('Xóa học sinh thất bại');
 }
 
 /* ---------------- Xóa nhiều ---------------- */
 export async function deleteStudents(ids = [], opts = {}) {
-    if (!Array.isArray(ids) || !ids.length)
-        return { ok: 0, fail: 0, errors: [] };
+    if (!Array.isArray(ids) || !ids.length) return { ok: 0, fail: 0, errors: [] };
 
     const concurrency = Number(opts.concurrency ?? 4);
     let i = 0;
@@ -550,10 +511,7 @@ export async function deleteStudents(ids = [], opts = {}) {
         }
     }
 
-    const workers = Array.from(
-        { length: Math.min(concurrency, ids.length) },
-        () => worker()
-    );
+    const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
     await Promise.all(workers);
     return { ok, fail, errors };
 }
@@ -564,7 +522,7 @@ export async function changeStudentClass(studentId, newClassId) {
         throw new Error('Thiếu học sinh hoặc lớp cần chuyển');
     }
 
-    const url = withApiV1(`/students/${studentId}/class`);
+    const url = withApiV1(`/students/${studentId}`); // dùng updateStudent BE mới
 
     try {
         const res = await http.put(
@@ -579,14 +537,11 @@ export async function changeStudentClass(studentId, newClassId) {
         );
         return res?.data?.data || res?.data;
     } catch (err) {
-        throw new Error(
-            err?.response?.data?.message ||
-                err?.response?.data?.error ||
-                err?.message ||
-                'Chuyển lớp thất bại'
-        );
+        throw new Error(err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Chuyển lớp thất bại');
     }
 }
+
+/* ---------------- Dùng cho màn giáo viên: lấy HS lớp của giáo viên ---------------- */
 export async function fetchStudentsOfMyClass(classId, params = {}, options = {}) {
     if (!classId) return { items: [], total: 0 };
 
@@ -596,11 +551,7 @@ export async function fetchStudentsOfMyClass(classId, params = {}, options = {})
         const url = withApiV1(`/students/teachers/my-classes/${classId}`);
         const res = await http.get(url);
 
-        const raw = Array.isArray(res?.data?.data)
-            ? res.data.data
-            : Array.isArray(res?.data)
-            ? res.data
-            : [];
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
 
         let mapped = raw.map(mapStudentRow);
 
@@ -611,9 +562,7 @@ export async function fetchStudentsOfMyClass(classId, params = {}, options = {})
         // Tận dụng lại filter/sort/pagination FE-side
         return applyFiltersSortPaginate(mapped, params);
     } catch (err) {
-        throw new Error(
-            extractErrorMessage(err, 'Không thể tải danh sách học sinh theo lớp giáo viên')
-        );
+        throw new Error(extractErrorMessage(err, 'Không thể tải danh sách học sinh theo lớp giáo viên'));
     }
 }
 
@@ -627,35 +576,22 @@ export async function fetchStudentsOfMyClassRaw(classId) {
         const url = withApiV1(`/students/teachers/my-classes/${classId}`);
         const res = await http.get(url);
 
-        const raw = Array.isArray(res?.data?.data)
-            ? res.data.data
-            : Array.isArray(res?.data)
-            ? res.data
-            : [];
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
 
         let mapped = raw.map(mapStudentRow);
         mapped = await enrichStudentsWithParents(mapped);
         return mapped;
     } catch (err) {
-        throw new Error(
-            extractErrorMessage(err, 'Không thể tải danh sách học sinh theo lớp giáo viên')
-        );
+        throw new Error(extractErrorMessage(err, 'Không thể tải danh sách học sinh theo lớp giáo viên'));
     }
 }
-/* ---------------- bulkImportStudentsFromFile (FE tự đọc Excel, gọi /students/create) ---------------- */
+
+/* ---------------- bulkImportStudentsFromFile (FE tự đọc Excel, gọi /students/create) ----------------
+   LƯU Ý: Hàm này vẫn giữ nguyên endpoint cũ (/students/create). Nếu BE không còn
+   endpoint đó thì modal Import hiện tại nên dùng importStudentsExcel (server-side). */
 export async function bulkImportStudentsFromFile(file, options = {}) {
     const {
-        requiredHeaders = [
-            'studentCode',
-            'fullName',
-            'dateOfBirth',
-            'gender',
-            'className',
-            'parentName',
-            'parentPhone',
-            'parentEmail',
-            'address'
-        ],
+        requiredHeaders = ['studentCode', 'fullName', 'dateOfBirth', 'gender', 'className', 'parentName', 'parentPhone', 'parentEmail', 'address'],
         maxPreview = 20000,
         chunkSize = 20,
         maxConcurrency = 5,
@@ -691,9 +627,7 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
         existing = [];
     }
     const codeSet = new Set(existing.map((s) => s.code).filter(Boolean));
-    const parentPhoneSet = new Set(
-        existing.map((s) => s.parentPhone).filter(Boolean)
-    );
+    const parentPhoneSet = new Set(existing.map((s) => s.parentPhone).filter(Boolean));
     const emailSet = new Set(existing.map((s) => s.email).filter(Boolean));
 
     const rows = json.slice(0, maxPreview).map((r, i) => {
@@ -701,10 +635,7 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         let studentCode = (r.studentCode || '').trim();
         if (!studentCode && autoGenerateCode) {
-            studentCode =
-                'HS' +
-                Date.now().toString().slice(-6) +
-                (Math.floor(Math.random() * 900) + 100);
+            studentCode = 'HS' + Date.now().toString().slice(-6) + (Math.floor(Math.random() * 900) + 100);
         }
         if (!studentCode) rowErrors.push('Thiếu studentCode');
 
@@ -727,21 +658,16 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
 
         const parentPhone = (r.parentPhone || '').trim();
         if (!parentPhone) rowErrors.push('Thiếu parentPhone');
-        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone))
-            rowErrors.push('parentPhone sai định dạng');
+        else if (!/^[0-9+()\-\s]{6,20}$/.test(parentPhone)) rowErrors.push('parentPhone sai định dạng');
 
         const parentEmail = (r.parentEmail || '').trim();
-        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail))
-            rowErrors.push('parentEmail không hợp lệ');
+        if (parentEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail)) rowErrors.push('parentEmail không hợp lệ');
 
         const address = (r.address || '').trim();
 
-        if (studentCode && codeSet.has(studentCode))
-            rowErrors.push('studentCode trùng');
-        if (parentPhone && parentPhoneSet.has(parentPhone))
-            rowErrors.push('parentPhone trùng');
-        if (parentEmail && emailSet.has(parentEmail))
-            rowErrors.push('parentEmail trùng');
+        if (studentCode && codeSet.has(studentCode)) rowErrors.push('studentCode trùng');
+        if (parentPhone && parentPhoneSet.has(parentPhone)) rowErrors.push('parentPhone trùng');
+        if (parentEmail && emailSet.has(parentEmail)) rowErrors.push('parentEmail trùng');
 
         return {
             index: i,
@@ -784,26 +710,21 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     async function runChunk(chunk) {
         const promises = chunk.map(async (r) => {
             try {
-                const url = withApiV1('/students/create');
+                const url = withApiV1('/students/create'); // GIỮ NGUYÊN endpoint cũ
                 await http.post(url, r.payload);
                 if (r.payload.studentCode) codeSet.add(r.payload.studentCode);
-                if (r.payload.parentPhone)
-                    parentPhoneSet.add(r.payload.parentPhone);
+                if (r.payload.parentPhone) parentPhoneSet.add(r.payload.parentPhone);
                 if (r.payload.parentEmail) emailSet.add(r.payload.parentEmail);
                 report.inserted += 1;
             } catch (e) {
                 report.failed += 1;
-                report.errors.push(
-                    `Row ${r.rowNumber}: ${extractErrorMessage(e, 'Lỗi tạo')}`
-                );
+                report.errors.push(`Row ${r.rowNumber}: ${extractErrorMessage(e, 'Lỗi tạo')}`);
             } finally {
                 processed += 1;
                 (onProgress || (() => {}))({
                     processed,
                     total: validRows.length,
-                    percent: Math.round(
-                        (processed * 100) / (validRows.length || 1)
-                    )
+                    percent: Math.round((processed * 100) / (validRows.length || 1))
                 });
             }
         });
@@ -828,4 +749,97 @@ export async function bulkImportStudentsFromFile(file, options = {}) {
     });
 
     return { report, rows, validRows, invalidRows };
+}
+
+/* ==================== CÁC HÀM MỚI THEO BACKEND STUDENT ==================== */
+
+/** 1) Lấy danh sách học sinh đang học trực tiếp từ BE (GET /students/active) */
+export async function fetchActiveStudentsFromBackend() {
+    try {
+        const url = withApiV1('/students/active');
+        const res = await http.get(url);
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+
+        let mapped = raw.map(mapStudentRow);
+        mapped = await enrichStudentsWithParents(mapped);
+        return mapped; // trả về list học sinh đang học
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Không lấy được danh sách học sinh đang học'));
+    }
+}
+
+/** 2) Lấy học sinh theo classId trực tiếp từ BE (GET /students/class/{classId}) */
+export async function fetchStudentsByClassFromBackend(classId) {
+    if (!classId) return [];
+    try {
+        const url = withApiV1(`/students/class/${classId}`);
+        const res = await http.get(url);
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+
+        let mapped = raw.map(mapStudentRow);
+        mapped = await enrichStudentsWithParents(mapped);
+        return mapped;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Không lấy được danh sách học sinh theo lớp'));
+    }
+}
+
+/** 3) Đổi trạng thái 1 học sinh (POST /students/status/change) */
+export async function changeStudentStatus(payload) {
+    try {
+        const url = withApiV1('/students/status/change');
+        const res = await http.post(url, payload, {
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json'
+            }
+        });
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Cập nhật trạng thái học sinh thất bại'));
+    }
+}
+
+/** 4) Cho học sinh quay lại học sau bảo lưu (POST /students/status/return-from-reserve/{id}) */
+export async function returnFromReserve(studentId) {
+    if (!studentId) throw new Error('Thiếu id học sinh');
+    try {
+        const url = withApiV1(`/students/status/return-from-reserve/${studentId}`);
+        const res = await http.post(url);
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Xử lý quay lại học thất bại'));
+    }
+}
+
+// Alias cho màn Học sinh (đang import returnStudentFromReserve)
+export async function returnStudentFromReserve(studentId) {
+    return returnFromReserve(studentId);
+}
+
+/** 5) Thống kê trạng thái học sinh (GET /students/status/statistics) */
+export async function fetchStudentStatusStatistics() {
+    try {
+        const url = withApiV1('/students/status/statistics');
+        const res = await http.get(url);
+        return res?.data?.data || res?.data;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Không lấy được thống kê trạng thái học sinh'));
+    }
+}
+
+/** 6) Lấy danh sách học sinh theo trạng thái trực tiếp từ BE (GET /students/status/{status}) */
+export async function fetchStudentsByStatusFromBackend(status) {
+    if (!status) throw new Error('Thiếu status');
+    try {
+        const url = withApiV1(`/students/status/${status}`);
+        const res = await http.get(url);
+        const raw = Array.isArray(res?.data?.data) ? res.data.data : Array.isArray(res?.data) ? res.data : [];
+
+        let mapped = raw.map(mapStudentRow);
+        mapped = await enrichStudentsWithParents(mapped);
+        return mapped;
+    } catch (err) {
+        throw new Error(extractErrorMessage(err, 'Không lấy được danh sách theo trạng thái'));
+    }
 }
