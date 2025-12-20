@@ -865,6 +865,24 @@ onMounted(async () => {
     align-items: center;
     gap: 0.75rem;
 }
+:global(.swal2-container) {
+    z-index: 20000 !important;
+}
+:global(.swal2-popup) {
+    z-index: 20001 !important;
+}
+:global(.swal2-toast) {
+    z-index: 20002 !important;
+}
+
+/* ===== Base ===== */
+.album-page {
+    padding: 1.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
+    background: #f8fafc;
+    min-height: 100vh;
+}
 
 .header-icon {
     width: 48px;

@@ -1451,4 +1451,88 @@ watch(selectedClassId, () => {
         flex: 1;
     }
 }
+/* =================== RESPONSIVE PATCH: LEAVE PAGE =================== */
+
+/* Tránh text dài làm vỡ card */
+.student-name,
+.detail-row span,
+.card-meta span,
+.info-name,
+.detail-item .value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Cho phép wrap chỗ cần wrap (lý do thường dài) */
+.detail-row.reason span {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+}
+
+/* Card header: trên mobile cho status xuống dòng nếu chật */
+@media (max-width: 420px) {
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
+/* Card meta: cho wrap thay vì tràn */
+.card-meta {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* Days count không ép quá, tránh đẩy layout */
+.days-count {
+  flex-shrink: 0;
+}
+
+/* Filter actions: wrap đẹp hơn trên mobile */
+@media (max-width: 640px) {
+  .filter-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+/* Dialog header: cho phép wrap */
+.dialog-header h3 {
+  white-space: normal;
+}
+
+/* Dialog footer: stack buttons trên mobile */
+@media (max-width: 640px) {
+  .dialog-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .footer-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .btn-secondary,
+  .btn-approve,
+  .btn-reject {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Days table rows: wrap nếu ngày/label dài */
+.day-row {
+  flex-wrap: wrap;
+}
+
+.day-date {
+  min-width: 120px;
+}
 </style>

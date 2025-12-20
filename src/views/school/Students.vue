@@ -12,19 +12,15 @@ import Swal from 'sweetalert2';
 import {
     fetchStudents,
     fetchStudentsByClass,
-    fetchActiveStudentsFromBackend,
-    fetchStudentsByStatusFromBackend,
     fetchStudentStatusStatistics,
     exportStudentsExcel,
     deleteStudent,
     deleteStudents,
     changeStudentStatus,
     returnStudentFromReserve,
-    changeStudentClass,
-    getStudentById,
-    // ✅ FIX: thêm hàm download template từ BE
     downloadStudentsImportTemplateFromBackend
 } from '@/service/studentService.js';
+
 import { fetchClassOptions } from '@/service/classService.js';
 
 import ImportStudentsModal from '@/components/staff/ImportStudentsModal.vue';
@@ -94,13 +90,13 @@ const years = [
     { label: '2024 - 2025', value: '2024-2025' },
     { label: '2023 - 2024', value: '2023-2024' }
 ];
-const selectedYear = ref(years[0]);
+const selectedYear = ref(years[0]); // UI only
 
 const classOptions = ref([]);
 const gradeOptions = ref([{ label: 'Tất cả khối', value: '' }]);
 const classFilters = ref([{ label: 'Tất cả lớp', value: '' }]);
 
-const selectedGrade = ref(gradeOptions.value[0]);
+const selectedGrade = ref(gradeOptions.value[0]); // UI only
 const selectedClass = ref(classFilters.value[0]);
 
 /* =================== STATUS TABS =================== */
@@ -132,12 +128,9 @@ const showImport = ref(false);
 const showCreate = ref(false);
 const showChangeClass = ref(false);
 const showProfile = ref(false);
-const showStatusChange = ref(false);
 
 const studentForChange = ref(null);
 const studentIdForProfile = ref(null);
-const studentForStatus = ref(null);
-const newStatusCode = ref('');
 
 /* =================== BUILD FILTERS =================== */
 async function loadClassFilters() {
@@ -153,7 +146,6 @@ async function loadClassFilters() {
     }
 }
 
-/** ✅ FIX: Tải file mẫu Excel import theo backend */
 async function onDownloadImportTemplate() {
     try {
         await downloadStudentsImportTemplateFromBackend();
@@ -166,7 +158,6 @@ async function onDownloadImportTemplate() {
 function buildFilters() {
     const all = classOptions.value || [];
 
-    // Grades
     const gradeSet = new Set();
     all.forEach((c) => {
         if (c.grade) gradeSet.add(c.grade);
@@ -183,7 +174,6 @@ function buildFilters() {
         selectedGrade.value = gradeOptions.value[0];
     }
 
-    // Classes
     const currentGrade = selectedGrade.value?.value || '';
     const classesForGrade = currentGrade ? all.filter((c) => c.grade === currentGrade) : all;
 
@@ -201,48 +191,78 @@ function buildFilters() {
     }
 }
 
-/* =================== LOAD DATA =================== */
-async function load(isInit = false) {
+/* =================== LOCAL FILTER =================== */
+function applyLocalFilters(list) {
+    let data = Array.isArray(list) ? [...list] : [];
+
+    // tab status
+    if (currentStatus.value && currentStatus.value !== 'all') {
+        data = data.filter((x) => String(x.status || '').toLowerCase() === String(currentStatus.value).toLowerCase());
+    }
+
+    // keyword
+    const kw = String(keyword.value || '').trim().toLowerCase();
+    if (kw) {
+        data = data.filter((x) => {
+            const name = String(x.name || '').toLowerCase();
+            const code = String(x.code || x.studentCode || '').toLowerCase();
+            return name.includes(kw) || code.includes(kw);
+        });
+    }
+
+    // sort
+    if (sortField.value) {
+        const field = sortField.value;
+        const factor = sortOrder.value === -1 ? -1 : 1;
+        data.sort((a, b) => {
+            const va = String(a[field] ?? '').toLowerCase();
+            const vb = String(b[field] ?? '').toLowerCase();
+            if (va < vb) return -1 * factor;
+            if (va > vb) return 1 * factor;
+            return 0;
+        });
+    }
+
+    return data;
+}
+
+/* =================== LOAD =================== */
+async function load() {
     loading.value = true;
     try {
-        // 1. Load statistics
+        // stats
         try {
             statusStats.value = await fetchStudentStatusStatistics();
         } catch (e) {
             console.warn('Load stats failed:', e);
         }
 
-        // 2. Load all data for counts
+        // allData (counts fallback)
         try {
             const all = await fetchStudents({ status: 'all', page: 1, size: 99999 });
-            allData.value = all.items;
+            allData.value = all.items || [];
         } catch (e) {
             console.warn('Load all data failed:', e);
         }
 
-        // 3. Build filter params
-        let classNameFilter;
-        if (selectedClass.value?.value) {
-            classNameFilter = selectedClass.value.className || selectedClass.value.value;
-        } else if (selectedGrade.value?.value) {
-            classNameFilter = selectedGrade.value.value;
+        // list
+        const classId = selectedClass.value?.value || '';
+        let list = [];
+
+        if (classId) {
+            list = await fetchStudentsByClass(classId);
+        } else {
+            const res = await fetchStudents({ status: 'all', page: 1, size: 99999 });
+            list = res.items || [];
         }
 
-        const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
+        const filtered = applyLocalFilters(list);
 
-        // 4. Fetch students với filter
-        const { items, total } = await fetchStudents({
-            status: currentStatus.value,
-            year: selectedYear.value?.value || undefined,
-            className: classNameFilter || undefined,
-            name: keyword.value || undefined,
-            page: page.value,
-            size: size.value,
-            sort
-        });
+        totalRecords.value = filtered.length;
+        const start = (page.value - 1) * size.value;
+        const end = start + size.value;
+        rows.value = filtered.slice(start, end);
 
-        rows.value = items;
-        totalRecords.value = total;
         selection.value = [];
         selectAll.value = false;
     } catch (e) {
@@ -265,9 +285,8 @@ function switchStatus(key) {
 }
 
 function onSort(field) {
-    if (sortField.value === field) {
-        sortOrder.value = sortOrder.value === 1 ? -1 : 1;
-    } else {
+    if (sortField.value === field) sortOrder.value = sortOrder.value === 1 ? -1 : 1;
+    else {
         sortField.value = field;
         sortOrder.value = 1;
     }
@@ -277,20 +296,15 @@ function onSort(field) {
 
 /* =================== SELECTION =================== */
 function toggleSelectAll() {
-    if (selectAll.value) {
-        selection.value = [...rows.value];
-    } else {
-        selection.value = [];
-    }
+    if (selectAll.value) selection.value = [...rows.value];
+    else selection.value = [];
 }
 
 function toggleSelect(row) {
     const idx = selection.value.findIndex((r) => r.id === row.id);
-    if (idx >= 0) {
-        selection.value.splice(idx, 1);
-    } else {
-        selection.value.push(row);
-    }
+    if (idx >= 0) selection.value.splice(idx, 1);
+    else selection.value.push(row);
+
     selectAll.value = selection.value.length === rows.value.length && rows.value.length > 0;
 }
 
@@ -298,7 +312,7 @@ function isSelected(row) {
     return selection.value.some((r) => r.id === row.id);
 }
 
-/* =================== SINGLE ACTIONS =================== */
+/* =================== VIEW / ACTIONS =================== */
 function openProfile(row) {
     if (!row?.id) return;
     studentIdForProfile.value = row.id;
@@ -310,18 +324,64 @@ function openChangeClass(row) {
     showChangeClass.value = true;
 }
 
+/* ----- Single actions ----- */
+async function onDelete(row) {
+    if (isProcessing.value) return;
+
+    const { isConfirmed } = await confirmDialog('Xóa học sinh?', `Xóa "${row.name}"? Thao tác không thể hoàn tác.`, {
+        confirmText: 'Xóa',
+        color: '#dc2626'
+    });
+    if (!isConfirmed) return;
+
+    isProcessing.value = true;
+    try {
+        await deleteStudent(row.id, { timeoutMs: 12000 });
+        swalToast.fire({ icon: 'success', title: `Đã xóa "${row.name}"` });
+        await load();
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Xóa thất bại' });
+    } finally {
+        isProcessing.value = false;
+    }
+}
+
+async function onReturnFromReserve(row) {
+    if (isProcessing.value) return;
+
+    const { isConfirmed } = await confirmDialog('Cho học sinh quay lại học?', `"${row.name}" sẽ được chuyển về trạng thái đang học`, {
+        confirmText: 'Xác nhận',
+        color: '#10b981',
+        icon: 'question'
+    });
+    if (!isConfirmed) return;
+
+    isProcessing.value = true;
+    try {
+        await returnStudentFromReserve(row.id);
+        swalToast.fire({ icon: 'success', title: `Đã cho "${row.name}" quay lại học` });
+        await load();
+    } catch (e) {
+        swalToast.fire({ icon: 'error', title: e?.message || 'Thao tác thất bại' });
+    } finally {
+        isProcessing.value = false;
+    }
+}
+
 async function onChangeStatus(row, statusCode) {
     if (isProcessing.value) return;
 
-    const statusLabels = {
+    const labels = {
         DROPOUT: 'thôi học',
         RESERVED: 'bảo lưu',
         GRADUATED: 'tốt nghiệp',
         TRANSFERRED: 'chuyển trường'
     };
 
-    const { value: reason, isConfirmed } = await inputDialog(`Xác nhận ${statusLabels[statusCode]}`, `Cập nhật trạng thái cho "${row.name}"`, { placeholder: 'Lý do (không bắt buộc)', confirmText: 'Xác nhận' });
-
+    const { value: reason, isConfirmed } = await inputDialog(`Xác nhận ${labels[statusCode] || 'cập nhật'}`, `Cập nhật trạng thái cho "${row.name}"`, {
+        placeholder: 'Lý do (không bắt buộc)',
+        confirmText: 'Xác nhận'
+    });
     if (!isConfirmed) return;
 
     isProcessing.value = true;
@@ -340,49 +400,19 @@ async function onChangeStatus(row, statusCode) {
     }
 }
 
-async function onReturnFromReserve(row) {
-    if (isProcessing.value) return;
-
-    if (row.status !== 'reserved') {
-        const { isConfirmed } = await confirmDialog('Học sinh không ở trạng thái bảo lưu', 'Bạn vẫn muốn cho học sinh này quay lại học?', { confirmText: 'Tiếp tục', icon: 'question' });
-        if (!isConfirmed) return;
-    } else {
-        const { isConfirmed } = await confirmDialog('Cho học sinh quay lại học?', `"${row.name}" sẽ được chuyển về trạng thái đang học`, { confirmText: 'Xác nhận', color: '#10b981', icon: 'question' });
-        if (!isConfirmed) return;
+/* ----- Bulk actions ----- */
+function bulkChangeClass() {
+    if (!selection.value.length) {
+        swalToast.fire({ icon: 'info', title: 'Chưa chọn học sinh nào' });
+        return;
     }
-
-    isProcessing.value = true;
-    try {
-        await returnStudentFromReserve(row.id);
-        swalToast.fire({ icon: 'success', title: `Đã cho "${row.name}" quay lại học` });
-        await load();
-    } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Thao tác thất bại' });
-    } finally {
-        isProcessing.value = false;
+    if (selection.value.length !== 1) {
+        swalToast.fire({ icon: 'info', title: 'Chỉ có thể chuyển lớp từng học sinh' });
+        return;
     }
+    openChangeClass(selection.value[0]);
 }
 
-async function onDelete(row) {
-    if (isProcessing.value) return;
-
-    const { isConfirmed } = await confirmDialog('Xóa học sinh?', `Xóa "${row.name}"? Thao tác không thể hoàn tác.`, { confirmText: 'Xóa', color: '#dc2626' });
-
-    if (!isConfirmed) return;
-
-    isProcessing.value = true;
-    try {
-        await deleteStudent(row.id, { timeoutMs: 12000 });
-        swalToast.fire({ icon: 'success', title: `Đã xóa "${row.name}"` });
-        await load();
-    } catch (e) {
-        swalToast.fire({ icon: 'error', title: e?.message || 'Xóa thất bại' });
-    } finally {
-        isProcessing.value = false;
-    }
-}
-
-/* =================== BULK ACTIONS =================== */
 async function bulkChangeStatus(statusCode) {
     if (isProcessing.value) return;
     if (!selection.value.length) {
@@ -390,15 +420,17 @@ async function bulkChangeStatus(statusCode) {
         return;
     }
 
-    const statusLabels = {
+    const labels = {
         DROPOUT: 'thôi học',
         RESERVED: 'bảo lưu',
         GRADUATED: 'tốt nghiệp',
         TRANSFERRED: 'chuyển trường'
     };
 
-    const { value: reason, isConfirmed } = await inputDialog(`Xác nhận ${statusLabels[statusCode]}`, `Áp dụng cho ${selection.value.length} học sinh`, { placeholder: 'Lý do chung (không bắt buộc)', confirmText: 'Thực hiện' });
-
+    const { value: reason, isConfirmed } = await inputDialog(`Xác nhận ${labels[statusCode] || 'cập nhật'}`, `Áp dụng cho ${selection.value.length} học sinh`, {
+        placeholder: 'Lý do chung (không bắt buộc)',
+        confirmText: 'Thực hiện'
+    });
     if (!isConfirmed) return;
 
     isProcessing.value = true;
@@ -412,21 +444,16 @@ async function bulkChangeStatus(statusCode) {
 
     let ok = 0;
     let fail = 0;
+
     for (let i = 0; i < selection.value.length; i++) {
         const row = selection.value[i];
         try {
-            await changeStudentStatus({
-                studentId: row.id,
-                newStatus: statusCode,
-                reason: reason || ''
-            });
+            await changeStudentStatus({ studentId: row.id, newStatus: statusCode, reason: reason || '' });
             ok++;
         } catch {
             fail++;
         }
-        Swal.update({
-            html: `<div class="progress-info">${i + 1}/${selection.value.length}</div>`
-        });
+        Swal.update({ html: `<div class="progress-info">${i + 1}/${selection.value.length}</div>` });
     }
 
     Swal.close();
@@ -446,8 +473,10 @@ async function bulkDelete() {
         return;
     }
 
-    const { isConfirmed } = await confirmDialog('Xóa học sinh đã chọn?', `Xóa ${selection.value.length} học sinh? Không thể hoàn tác.`, { confirmText: 'Xóa', color: '#dc2626' });
-
+    const { isConfirmed } = await confirmDialog('Xóa học sinh đã chọn?', `Xóa ${selection.value.length} học sinh? Không thể hoàn tác.`, {
+        confirmText: 'Xóa',
+        color: '#dc2626'
+    });
     if (!isConfirmed) return;
 
     isProcessing.value = true;
@@ -477,18 +506,6 @@ async function bulkDelete() {
     }
 }
 
-function bulkChangeClass() {
-    if (!selection.value.length) {
-        swalToast.fire({ icon: 'info', title: 'Chưa chọn học sinh nào' });
-        return;
-    }
-    if (selection.value.length > 1) {
-        swalToast.fire({ icon: 'info', title: 'Chỉ có thể chuyển lớp từng học sinh' });
-        return;
-    }
-    openChangeClass(selection.value[0]);
-}
-
 /* =================== EXPORT =================== */
 async function onExport() {
     try {
@@ -505,19 +522,16 @@ async function onImported() {
     await load();
     swalToast.fire({ icon: 'success', title: 'Import thành công' });
 }
-
 async function onStudentCreated() {
     showCreate.value = false;
     await load();
     swalToast.fire({ icon: 'success', title: 'Tạo học sinh thành công' });
 }
-
 async function onClassChanged() {
     showChangeClass.value = false;
     await load();
     swalToast.fire({ icon: 'success', title: 'Chuyển lớp thành công' });
 }
-
 async function onProfileUpdated() {
     await load();
 }
@@ -535,7 +549,9 @@ function formatDate(d) {
 }
 
 function getGenderConfig(g) {
-    return g === 'F' ? { icon: 'fa-venus', color: 'text-pink-500', label: 'Nữ', bg: 'bg-pink-50' } : { icon: 'fa-mars', color: 'text-blue-500', label: 'Nam', bg: 'bg-blue-50' };
+    return g === 'F'
+        ? { icon: 'fa-venus', color: 'text-pink-500', label: 'Nữ', bg: 'bg-pink-50' }
+        : { icon: 'fa-mars', color: 'text-blue-500', label: 'Nam', bg: 'bg-blue-50' };
 }
 
 function getStatusConfig(status) {
@@ -556,7 +572,14 @@ function getAvatar(name) {
 
 function getAvatarColor(name) {
     if (!name) return 'from-gray-400 to-gray-500';
-    const colors = ['from-blue-400 to-blue-600', 'from-green-400 to-green-600', 'from-purple-400 to-purple-600', 'from-pink-400 to-pink-600', 'from-indigo-400 to-indigo-600', 'from-teal-400 to-teal-600'];
+    const colors = [
+        'from-blue-400 to-blue-600',
+        'from-green-400 to-green-600',
+        'from-purple-400 to-purple-600',
+        'from-pink-400 to-pink-600',
+        'from-indigo-400 to-indigo-600',
+        'from-teal-400 to-teal-600'
+    ];
     const index = name.charCodeAt(0) % colors.length;
     return colors[index];
 }
@@ -591,13 +614,18 @@ watch(selectedClass, () => {
 /* =================== INIT =================== */
 onMounted(async () => {
     await loadClassFilters();
-    await load(true);
+    await load();
 });
 </script>
 
 <template>
     <div class="student-page">
-        <!-- Header -->
+        <!-- ✅ Modals: chỉ render 1 lần (đã xóa block trùng ở cuối) -->
+        <ImportStudentsModal v-model:modelValue="showImport" @imported="onImported" :useServerTemplate="true" />
+        <CreateStudentModal v-model:modelValue="showCreate" @created="onStudentCreated" />
+        <ChangeStudentClassModal v-model:modelValue="showChangeClass" :student="studentForChange" @changed="onClassChanged" />
+        <StudentProfileModal v-model:modelValue="showProfile" :studentId="studentIdForProfile" @updated="onProfileUpdated" />
+
         <header class="page-header">
             <div class="header-left">
                 <div class="header-icon">
@@ -611,13 +639,10 @@ onMounted(async () => {
             <div class="header-stats">
                 <div class="header-stat">
                     <i class="fa-solid fa-users"></i>
-                    <span
-                        ><strong>{{ counts.all }}</strong> học sinh</span
-                    >
+                    <span><strong>{{ counts.all }}</strong> học sinh</span>
                 </div>
             </div>
             <div class="header-actions">
-                <!-- ✅ FIX: nút tải file mẫu excel từ backend -->
                 <button class="btn btn-outline" @click="onDownloadImportTemplate">
                     <i class="fa-solid fa-download"></i>
                     <span>Tải file mẫu</span>
@@ -638,9 +663,14 @@ onMounted(async () => {
             </div>
         </header>
 
-        <!-- Status Tabs -->
         <div class="status-tabs">
-            <button v-for="tab in statusTabs" :key="tab.key" class="status-tab" :class="{ active: currentStatus === tab.key, [`tab-${tab.color}`]: true }" @click="switchStatus(tab.key)">
+            <button
+                v-for="tab in statusTabs"
+                :key="tab.key"
+                class="status-tab"
+                :class="{ active: currentStatus === tab.key, [`tab-${tab.color}`]: true }"
+                @click="switchStatus(tab.key)"
+            >
                 <div class="tab-icon">
                     <i :class="['fa-solid', tab.icon]"></i>
                 </div>
@@ -651,7 +681,6 @@ onMounted(async () => {
             </button>
         </div>
 
-        <!-- Filters -->
         <div class="filter-card">
             <div class="filter-grid">
                 <div class="filter-item">
@@ -675,7 +704,6 @@ onMounted(async () => {
                 </div>
             </div>
 
-            <!-- Bulk Actions -->
             <div class="bulk-section">
                 <div class="bulk-left">
                     <span v-if="selection.length" class="bulk-count">
@@ -708,7 +736,6 @@ onMounted(async () => {
             </div>
         </div>
 
-        <!-- Table -->
         <div class="table-container">
             <div v-if="loading" class="loading-overlay">
                 <div class="loading-spinner">
@@ -806,7 +833,6 @@ onMounted(async () => {
                                     <i class="fa-solid fa-right-left"></i>
                                 </button>
 
-                                <!-- Conditional status actions -->
                                 <button v-if="row.status === 'reserved'" class="action-btn success" @click="onReturnFromReserve(row)" title="Quay lại học">
                                     <i class="fa-solid fa-rotate-left"></i>
                                 </button>
@@ -821,7 +847,6 @@ onMounted(async () => {
                         </td>
                     </tr>
 
-                    <!-- Empty state -->
                     <tr v-if="!loading && !rows.length">
                         <td colspan="8" class="empty-cell">
                             <div class="empty-state">
@@ -839,20 +864,12 @@ onMounted(async () => {
             </table>
         </div>
 
-        <!-- Pagination -->
         <div v-if="totalRecords > 0" class="pagination-section">
             <div class="pagination-info">
-                Hiển thị
-                <strong>{{ (page - 1) * size + 1 }}</strong> - <strong>{{ Math.min(page * size, totalRecords) }}</strong> / <strong>{{ totalRecords }}</strong> học sinh
+                Hiển thị <strong>{{ (page - 1) * size + 1 }}</strong> - <strong>{{ Math.min(page * size, totalRecords) }}</strong> / <strong>{{ totalRecords }}</strong> học sinh
             </div>
             <Paginator :rows="size" :totalRecords="totalRecords" :first="(page - 1) * size" @page="onPageChange" :rowsPerPageOptions="[20, 50, 100]" />
         </div>
-
-        <!-- Modals -->
-        <ImportStudentsModal v-model:modelValue="showImport" @imported="onImported" :useServerTemplate="true" />
-        <CreateStudentModal v-model:modelValue="showCreate" @created="onStudentCreated" />
-        <ChangeStudentClassModal v-model:modelValue="showChangeClass" :student="studentForChange" @changed="onClassChanged" />
-        <StudentProfileModal v-model:modelValue="showProfile" :studentId="studentIdForProfile" @updated="onProfileUpdated" />
     </div>
 </template>
 
@@ -963,29 +980,14 @@ onMounted(async () => {
     background: #4f46e5;
 }
 
-.btn-success {
-    background: #10b981;
-    color: white;
-}
-.btn-success:hover {
-    background: #059669;
-}
-
-.btn-warning {
-    background: #f59e0b;
-    color: white;
-}
-
 .btn-amber {
     background: #f59e0b;
     color: white;
 }
-
 .btn-rose {
     background: #f43f5e;
     color: white;
 }
-
 .btn-green {
     background: #10b981;
     color: white;
@@ -1167,7 +1169,6 @@ onMounted(async () => {
     padding-left: 2.25rem !important;
 }
 
-/* Bulk Section */
 .bulk-section {
     display: flex;
     justify-content: space-between;
@@ -1184,10 +1185,6 @@ onMounted(async () => {
     gap: 0.5rem;
     font-size: 0.875rem;
     color: #6366f1;
-}
-
-.bulk-count i {
-    font-size: 1rem;
 }
 
 .bulk-actions {
@@ -1225,11 +1222,6 @@ onMounted(async () => {
     justify-content: center;
     font-size: 1.5rem;
     color: #6366f1;
-}
-
-.loading-overlay span {
-    font-size: 0.875rem;
-    color: #64748b;
 }
 
 .data-table {
@@ -1297,16 +1289,6 @@ onMounted(async () => {
     user-select: none;
 }
 
-.th-sortable:hover {
-    color: #6366f1;
-}
-
-.th-sortable i {
-    font-size: 0.75rem;
-    color: #6366f1;
-}
-
-/* Code badge */
 .code-badge {
     display: inline-flex;
     padding: 0.25rem 0.5rem;
@@ -1317,17 +1299,11 @@ onMounted(async () => {
     font-family: 'SF Mono', 'Consolas', monospace;
 }
 
-/* Student cell */
 .student-cell {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     cursor: pointer;
-}
-
-.student-cell:hover .student-name {
-    color: #6366f1;
-    text-decoration: underline;
 }
 
 .student-avatar {
@@ -1342,49 +1318,6 @@ onMounted(async () => {
     font-weight: 600;
     font-size: 0.9375rem;
     flex-shrink: 0;
-}
-
-.from-blue-400 {
-    --tw-gradient-from: #60a5fa;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-blue-600 {
-    --tw-gradient-to: #2563eb;
-}
-.from-green-400 {
-    --tw-gradient-from: #4ade80;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-green-600 {
-    --tw-gradient-to: #16a34a;
-}
-.from-purple-400 {
-    --tw-gradient-from: #c084fc;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-purple-600 {
-    --tw-gradient-to: #9333ea;
-}
-.from-pink-400 {
-    --tw-gradient-from: #f472b6;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-pink-600 {
-    --tw-gradient-to: #db2777;
-}
-.from-indigo-400 {
-    --tw-gradient-from: #818cf8;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-indigo-600 {
-    --tw-gradient-to: #4f46e5;
-}
-.from-teal-400 {
-    --tw-gradient-from: #2dd4bf;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-}
-.to-teal-600 {
-    --tw-gradient-to: #0d9488;
 }
 
 .student-info {
@@ -1415,11 +1348,6 @@ onMounted(async () => {
     gap: 0.25rem;
 }
 
-.meta-item i {
-    font-size: 0.625rem;
-}
-
-/* Class badge */
 .class-badge {
     display: inline-flex;
     align-items: center;
@@ -1432,11 +1360,6 @@ onMounted(async () => {
     font-weight: 500;
 }
 
-.class-badge i {
-    font-size: 0.625rem;
-}
-
-/* Parent cell */
 .parent-cell {
     display: flex;
     flex-direction: column;
@@ -1456,11 +1379,6 @@ onMounted(async () => {
     margin-top: 0.125rem;
 }
 
-.parent-phone i {
-    font-size: 0.625rem;
-}
-
-/* Status badge */
 .status-badge {
     display: inline-flex;
     align-items: center;
@@ -1471,60 +1389,6 @@ onMounted(async () => {
     font-weight: 500;
 }
 
-.status-badge i {
-    font-size: 0.625rem;
-}
-
-/* Text colors */
-.text-pink-500 {
-    color: #ec4899;
-}
-.text-blue-500 {
-    color: #3b82f6;
-}
-.text-blue-600 {
-    color: #2563eb;
-}
-.text-amber-600 {
-    color: #d97706;
-}
-.text-green-600 {
-    color: #16a34a;
-}
-.text-red-600 {
-    color: #dc2626;
-}
-.text-purple-600 {
-    color: #9333ea;
-}
-.text-gray-600 {
-    color: #4b5563;
-}
-
-/* Background colors */
-.bg-blue-50 {
-    background: #eff6ff;
-}
-.bg-amber-50 {
-    background: #fffbeb;
-}
-.bg-green-50 {
-    background: #f0fdf4;
-}
-.bg-red-50 {
-    background: #fef2f2;
-}
-.bg-purple-50 {
-    background: #faf5ff;
-}
-.bg-gray-50 {
-    background: #f9fafb;
-}
-.bg-pink-50 {
-    background: #fdf2f8;
-}
-
-/* Action buttons */
 .action-group {
     display: flex;
     gap: 0.25rem;
@@ -1546,11 +1410,6 @@ onMounted(async () => {
     font-size: 0.8125rem;
 }
 
-.action-btn:hover {
-    background: #e2e8f0;
-    color: #475569;
-}
-
 .action-btn.success:hover {
     background: #dcfce7;
     color: #16a34a;
@@ -1564,12 +1423,6 @@ onMounted(async () => {
     color: #dc2626;
 }
 
-.action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* Empty state */
 .empty-cell {
     padding: 0 !important;
 }
@@ -1583,26 +1436,6 @@ onMounted(async () => {
     text-align: center;
 }
 
-.empty-state i {
-    font-size: 3rem;
-    color: #cbd5e1;
-    margin-bottom: 1rem;
-}
-
-.empty-state h3 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: #475569;
-    margin: 0 0 0.5rem;
-}
-
-.empty-state p {
-    font-size: 0.875rem;
-    color: #94a3b8;
-    margin: 0 0 1.5rem;
-}
-
-/* ===== Pagination ===== */
 .pagination-section {
     display: flex;
     justify-content: space-between;
@@ -1621,59 +1454,12 @@ onMounted(async () => {
     color: #64748b;
 }
 
-.pagination-info strong {
-    color: #1e293b;
+/* responsive helpers */
+.table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
-
-/* ===== Responsive ===== */
-@media (max-width: 768px) {
-    .student-page {
-        padding: 1rem;
-    }
-
-    .page-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .header-actions {
-        width: 100%;
-        justify-content: flex-start;
-    }
-
-    .header-actions .btn span {
-        display: none;
-    }
-
-    .status-tabs {
-        grid-template-columns: repeat(3, 1fr);
-    }
-
-    .tab-content {
-        display: none;
-    }
-
-    .status-tab {
-        justify-content: center;
-        padding: 0.75rem;
-    }
-
-    .bulk-section {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .bulk-actions {
-        width: 100%;
-    }
-
-    .data-table {
-        font-size: 0.8125rem;
-    }
-
-    .col-parent,
-    .col-code {
-        display: none;
-    }
+.data-table {
+    min-width: 980px;
 }
 </style>

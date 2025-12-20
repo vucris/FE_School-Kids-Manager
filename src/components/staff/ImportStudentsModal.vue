@@ -3,7 +3,6 @@ import { ref, computed, watch } from 'vue';
 import Dialog from 'primevue/dialog';
 import Button from 'primevue/button';
 
-// ✅ dùng template từ BE + import excel BE
 import { importStudentsExcel, downloadStudentsImportTemplateFromBackend } from '@/service/studentService.js';
 
 const props = defineProps({
@@ -60,9 +59,10 @@ function onDragLeave() {
 
 function validateAndSet(f) {
     errorMsg.value = '';
-    const ok = /\.(xlsx|xls)$/i.test(f.name);
+    // ✅ FIX: BE chỉ đọc .xlsx (XSSFWorkbook). Không nhận .xls
+    const ok = /\.xlsx$/i.test(f.name);
     if (!ok) {
-        errorMsg.value = 'Chỉ chấp nhận .xlsx hoặc .xls';
+        errorMsg.value = 'Chỉ chấp nhận file Excel .xlsx';
         return;
     }
     if (f.size > 25 * 1024 * 1024) {
@@ -72,7 +72,6 @@ function validateAndSet(f) {
     file.value = f;
 }
 
-/** ✅ tải file mẫu đúng từ Backend: GET /students/import-template */
 async function onDownloadTemplate() {
     errorMsg.value = '';
     infoMsg.value = '';
@@ -95,14 +94,11 @@ async function onUpload() {
     infoMsg.value = '';
 
     try {
-        const res = await importStudentsExcel(file.value, {
+        const msg = await importStudentsExcel(file.value, {
             onProgress: (p) => (progress.value = p)
         });
 
-        // importStudentsExcel có thể trả string message
-        const msg = typeof res === 'string' ? res : res?.message || 'Nhập học sinh thành công';
-
-        infoMsg.value = msg;
+        infoMsg.value = msg || 'Nhập học sinh thành công';
         emit('imported');
 
         setTimeout(() => {
@@ -129,7 +125,10 @@ async function onUpload() {
                     Kéo thả file Excel vào đây hoặc
                     <label class="link" for="student_import_input">chọn file từ hệ thống</label>
                 </div>
-                <input id="student_import_input" type="file" accept=".xlsx,.xls" class="hidden" @change="onChooseFile" />
+
+                <!-- ✅ FIX: accept chỉ .xlsx -->
+                <input id="student_import_input" type="file" accept=".xlsx" class="hidden" @change="onChooseFile" />
+
                 <div v-if="file" class="file-tag">
                     <i class="fa-regular fa-file-excel mr-2 text-emerald-600"></i>
                     <span class="font-medium">{{ file.name }}</span>
@@ -138,11 +137,14 @@ async function onUpload() {
             </div>
         </div>
 
-        <!-- ✅ Update hướng dẫn đúng theo BE “mầm non” -->
         <div class="mt-3 text-sm text-slate-700">
             Thứ tự cột trong file Excel (hàng đầu là tiêu đề):
-            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">fullName, phone, gender(NAM/NỮ), dateOfBirth(dd-MM-yyyy), address, healthNotes, classCode, parentPhone</div>
-            <div class="mt-2 text-xs text-slate-500">Gợi ý: Học sinh mầm non có thể để trống <b>phone</b>. Giới tính nhập <b>NAM</b> hoặc <b>NỮ</b>.</div>
+            <div class="mt-1 font-mono text-slate-800 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                fullName, phone, gender(NAM/NỮ), dateOfBirth(dd-MM-yyyy), address, healthNotes, classCode, parentPhone
+            </div>
+            <div class="mt-2 text-xs text-slate-500">
+                Gợi ý: Có thể để trống <b>phone</b>. Giới tính nhập <b>NAM</b> hoặc <b>NỮ</b>. Ngày sinh đúng định dạng <b>dd-MM-yyyy</b>.
+            </div>
         </div>
 
         <div v-if="uploading" class="mt-3 text-sm text-slate-600">
@@ -172,7 +174,6 @@ async function onUpload() {
 </template>
 
 <style scoped>
-/* giữ nguyên style như bạn đang có */
 .dropzone {
     border: 2px dashed #cbd5e1;
     border-radius: 12px;

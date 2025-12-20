@@ -23,8 +23,8 @@ import { fetchTeachers } from '@/service/teacherService.js'; // nếu không có
 
 const router = useRouter();
 
-const schoolName = ref('Mầm non Canada Maple Bear');
-const academicYear = ref('2024 - 2025');
+const schoolName = ref('Mầm non Ai healtracking ');
+const academicYear = ref(' 2025');
 
 /** 4 thẻ thống kê */
 const stats = ref([

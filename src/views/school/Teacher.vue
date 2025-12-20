@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 
 import InputText from 'primevue/inputtext';
@@ -93,10 +93,13 @@ async function load() {
     }
 }
 
-/* Đếm tổng GV, active, locked – gọi 3 lần fetchTeachers với size=1 để lấy total */
 async function loadCounts() {
     try {
-        const [allRes, activeRes, lockedRes] = await Promise.all([fetchTeachers({ status: 'all', page: 1, size: 1 }), fetchTeachers({ status: 'active', page: 1, size: 1 }), fetchTeachers({ status: 'locked', page: 1, size: 1 })]);
+        const [allRes, activeRes, lockedRes] = await Promise.all([
+            fetchTeachers({ status: 'all', page: 1, size: 1 }),
+            fetchTeachers({ status: 'active', page: 1, size: 1 }),
+            fetchTeachers({ status: 'locked', page: 1, size: 1 })
+        ]);
         counts.value = {
             total: allRes.total || 0,
             active: activeRes.total || 0,
@@ -141,11 +144,9 @@ function toggleSelectAll() {
 
 function toggleSelect(row) {
     const idx = selection.value.findIndex((r) => r.id === row.id);
-    if (idx >= 0) {
-        selection.value.splice(idx, 1);
-    } else {
-        selection.value.push(row);
-    }
+    if (idx >= 0) selection.value.splice(idx, 1);
+    else selection.value.push(row);
+
     selectAll.value = selection.value.length === rows.value.length;
 }
 
@@ -177,10 +178,14 @@ async function onAfterUpsert() {
 
 async function onToggleStatus(row) {
     const isLocked = row.status === 'locked';
-    const { isConfirmed } = await confirmDialog(isLocked ? 'Mở khóa giáo viên?' : 'Khóa giáo viên?', `${isLocked ? 'Mở khóa' : 'Khóa'} tài khoản giáo viên "${row.name}"?`, {
-        confirmText: isLocked ? 'Mở khóa' : 'Khóa',
-        color: isLocked ? '#10b981' : '#f59e0b'
-    });
+    const { isConfirmed } = await confirmDialog(
+        isLocked ? 'Mở khóa giáo viên?' : 'Khóa giáo viên?',
+        `${isLocked ? 'Mở khóa' : 'Khóa'} tài khoản giáo viên "${row.name}"?`,
+        {
+            confirmText: isLocked ? 'Mở khóa' : 'Khóa',
+            color: isLocked ? '#10b981' : '#f59e0b'
+        }
+    );
     if (!isConfirmed) return;
 
     try {
@@ -203,13 +208,15 @@ async function bulkLock() {
         return;
     }
 
-    const { isConfirmed } = await confirmDialog('Khóa giáo viên đã chọn?', `Khóa ${target.length} giáo viên đang hoạt động?`, { confirmText: 'Khóa', color: '#f59e0b' });
+    const { isConfirmed } = await confirmDialog(
+        'Khóa giáo viên đã chọn?',
+        `Khóa ${target.length} giáo viên đang hoạt động?`,
+        { confirmText: 'Khóa', color: '#f59e0b' }
+    );
     if (!isConfirmed) return;
 
     try {
-        for (const t of target) {
-            await toggleTeacherStatus(t.id);
-        }
+        for (const t of target) await toggleTeacherStatus(t.id);
         swalToast.fire({ icon: 'success', title: 'Đã khóa giáo viên đã chọn' });
         await Promise.all([load(), loadCounts()]);
     } catch (e) {
@@ -224,13 +231,15 @@ async function bulkUnlock() {
         return;
     }
 
-    const { isConfirmed } = await confirmDialog('Mở khóa giáo viên đã chọn?', `Mở khóa ${target.length} giáo viên?`, { confirmText: 'Mở khóa', color: '#10b981', icon: 'question' });
+    const { isConfirmed } = await confirmDialog(
+        'Mở khóa giáo viên đã chọn?',
+        `Mở khóa ${target.length} giáo viên?`,
+        { confirmText: 'Mở khóa', color: '#10b981', icon: 'question' }
+    );
     if (!isConfirmed) return;
 
     try {
-        for (const t of target) {
-            await toggleTeacherStatus(t.id);
-        }
+        for (const t of target) await toggleTeacherStatus(t.id);
         swalToast.fire({ icon: 'success', title: 'Đã mở khóa giáo viên đã chọn' });
         await Promise.all([load(), loadCounts()]);
     } catch (e) {
@@ -259,6 +268,7 @@ function closeImport() {
     if (importLoading.value) return;
     showImport.value = false;
     selectedFile.value = null;
+    dragOver.value = false;
 }
 
 function onDrop(e) {
@@ -306,9 +316,18 @@ async function uploadExcel() {
     try {
         const result = (await importTeachersExcel(selectedFile.value)) || {};
 
+        // ✅ reset file input + state trước
         importLoading.value = false;
         if (fileInputRef.value) fileInputRef.value.value = '';
-        closeImport();
+
+        // ✅ đóng modal trước khi show Swal
+        showImport.value = false;
+        selectedFile.value = null;
+        dragOver.value = false;
+
+        // ✅ chờ PrimeVue dialog đóng overlay hoàn toàn
+        await nextTick();
+        await new Promise((r) => setTimeout(r, 60));
 
         let html = `
             <div style="text-align:left;font-size:14px;">
@@ -339,6 +358,7 @@ async function uploadExcel() {
     } catch (err) {
         importLoading.value = false;
         if (fileInputRef.value) fileInputRef.value.value = '';
+
         await Swal.fire({
             icon: 'error',
             title: 'Import thất bại',
@@ -410,7 +430,13 @@ onMounted(async () => {
 
         <!-- Stats / Tabs -->
         <div class="stats-row">
-            <div v-for="tab in tabs" :key="tab.key" class="stat-card" :class="{ active: currentTab === tab.key, [`stat-${tab.color}`]: tab.color }" @click="switchTab(tab.key)">
+            <div
+                v-for="tab in tabs"
+                :key="tab.key"
+                class="stat-card"
+                :class="{ active: currentTab === tab.key, [`stat-${tab.color}`]: tab.color }"
+                @click="switchTab(tab.key)"
+            >
                 <div class="stat-icon">
                     <i :class="['fa-solid', tab.icon]"></i>
                 </div>
@@ -566,7 +592,6 @@ onMounted(async () => {
             <Paginator :rows="size" :totalRecords="totalRecords" :first="(page - 1) * size" @page="onPageChange" :rowsPerPageOptions="[20, 50, 100]" />
         </div>
 
-        <!-- Upsert Modal (thêm / sửa / xem giáo viên) -->
         <TeacherUpsertModal v-model:modelValue="showUpsert" :teacher="editing" @saved="onAfterUpsert" />
 
         <!-- Import Dialog -->
@@ -579,7 +604,6 @@ onMounted(async () => {
             </template>
 
             <div class="dialog-body">
-                <!-- Drop zone -->
                 <div class="drop-zone" :class="{ 'drop-zone--active': dragOver }" @drop="onDrop" @dragover="onDragOver" @dragleave="onDragLeave" @click="chooseFile">
                     <div class="drop-icon">
                         <i class="fa-solid fa-cloud-arrow-up"></i>
@@ -592,17 +616,20 @@ onMounted(async () => {
                         <i class="fa-solid fa-file-excel"></i>
                         {{ selectedFile.name }}
                     </p>
-                    <p v-else class="drop-hint">Hỗ trợ định dạng .xlsx, .xls</p>
+                    <p v-else class="drop-hint">Hỗ trợ định dạng .xlsx</p>
                 </div>
-                <input ref="fileInputRef" type="file" accept=".xlsx,.xls" class="hidden" @change="onFileChange" />
 
-                <!-- Template info -->
+                <input ref="fileInputRef" type="file" accept=".xlsx" class="hidden" @change="onFileChange" />
+
                 <div class="template-info">
                     <div class="template-header">
                         <i class="fa-solid fa-info-circle"></i>
                         <span>Cấu trúc file Excel</span>
                     </div>
-                    <p class="template-cols">Họ và tên, Email, Số điện thoại, Giới tính, Ngày sinh, Chuyên môn, Mã nhân viên, Liên hệ khẩn cấp</p>
+                    <!-- ✅ cập nhật đúng cấu trúc BE -->
+                    <p class="template-cols">
+                        Họ và tên, Email, Số điện thoại, Giới tính, Ngày sinh, Chuyên môn, Ngày vào làm, Liên hệ khẩn cấp
+                    </p>
                 </div>
             </div>
 
@@ -648,7 +675,9 @@ onMounted(async () => {
     align-items: center;
     gap: 0.75rem;
 }
-
+.swal2-container {
+    z-index: 20000 !important;
+}
 .header-icon {
     width: 48px;
     height: 48px;
@@ -1202,5 +1231,76 @@ onMounted(async () => {
     color: #64748b;
     margin: 0;
     line-height: 1.5;
+}
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .header-actions .btn {
+    flex: 1;
+    min-width: 140px;
+    justify-content: center;
+  }
+}
+
+/* 2) Stats: giảm min width để không bị tràn */
+@media (max-width: 640px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 3) Filter bar: 3 cột -> 1 cột */
+@media (max-width: 900px) {
+  .filter-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 4) Table: cho phép scroll ngang */
+.table-container {
+  overflow-x: auto; /* ✅ quan trọng để responsive */
+}
+
+.data-table {
+  min-width: 980px; /* ✅ giữ cột không bị ép quá nhỏ; bạn có thể tăng/giảm */
+}
+
+/* 5) Dialog form: 2 cột -> 1 cột */
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* view grid cũng 1 cột */
+  .view-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .view-item.full {
+    grid-column: auto;
+  }
+
+  /* nút dialog: xuống hàng đẹp hơn */
+  .dialog-footer {
+    flex-direction: column;
+  }
+  .dialog-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* action buttons trong table: tránh quá dài */
+  .action-buttons {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
 }
 </style>

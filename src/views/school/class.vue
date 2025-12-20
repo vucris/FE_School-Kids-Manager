@@ -10,15 +10,7 @@ import InputNumber from 'primevue/inputnumber';
 
 import Swal from 'sweetalert2';
 
-import {
-    fetchClasses,
-    exportClassesExcel,
-    createClass,
-    updateClass,
-    deleteClass,
-    fetchClassById,
-    updateStudentCount
-} from '@/service/classService.js';
+import { fetchClasses, exportClassesExcel, createClass, updateClass, deleteClass, fetchClassById, updateStudentCount } from '@/service/classService.js';
 import { fetchTeachersLite } from '@/service/teacherService.js';
 
 /* =================== Toast =================== */
@@ -134,47 +126,28 @@ const roomOptions = {
 const DEFAULT_CAPACITY = 20;
 
 /* =================== COMPUTED =================== */
-const usedClassNames = computed(
-    () => new Set(allClasses.value.map((c) => c.className).filter(Boolean))
-);
-const usedRooms = computed(
-    () => new Set(allClasses.value.map((c) => c.roomNumber).filter(Boolean))
-);
-const usedTeachers = computed(
-    () =>
-        new Set(
-            allClasses.value
-                .filter((c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên')
-                .map((c) => c.teacherName)
-        )
-);
+const usedClassNames = computed(() => new Set(allClasses.value.map((c) => c.className).filter(Boolean)));
+const usedRooms = computed(() => new Set(allClasses.value.map((c) => c.roomNumber).filter(Boolean)));
+const usedTeachers = computed(() => new Set(allClasses.value.filter((c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên').map((c) => c.teacherName)));
 
 const availableClassNames = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
-    return (classNameOptions[grade] || [])
-        .filter((name) => !usedClassNames.value.has(name))
-        .map((name) => ({ label: name, value: name }));
+    return (classNameOptions[grade] || []).filter((name) => !usedClassNames.value.has(name)).map((name) => ({ label: name, value: name }));
 });
 
 const availableRooms = computed(() => {
     const grade = createForm.value.grade;
     if (!grade) return [];
-    return (roomOptions[grade] || [])
-        .filter((room) => !usedRooms.value.has(room))
-        .map((room) => ({ label: room, value: room }));
+    return (roomOptions[grade] || []).filter((room) => !usedRooms.value.has(room)).map((room) => ({ label: room, value: room }));
 });
 
-const availableTeachersForCreate = computed(() =>
-    teacherOptions.value.filter((t) => !usedTeachers.value.has(t.label))
-);
+const availableTeachersForCreate = computed(() => teacherOptions.value.filter((t) => !usedTeachers.value.has(t.label)));
 
 const availableTeachersForEdit = computed(() => {
     const currentClass = allClasses.value.find((c) => c.id === editForm.value.id);
     const currentTeacher = currentClass?.teacherName;
-    return teacherOptions.value.filter(
-        (t) => !usedTeachers.value.has(t.label) || t.label === currentTeacher
-    );
+    return teacherOptions.value.filter((t) => !usedTeachers.value.has(t.label) || t.label === currentTeacher);
 });
 
 const filteredRows = computed(() => {
@@ -186,12 +159,7 @@ const filteredRows = computed(() => {
 
     const kw = keyword.value.trim().toLowerCase();
     if (kw) {
-        list = list.filter(
-            (r) =>
-                (r.className || '').toLowerCase().includes(kw) ||
-                (r.teacherName || '').toLowerCase().includes(kw) ||
-                (r.roomNumber || '').toLowerCase().includes(kw)
-        );
+        list = list.filter((r) => (r.className || '').toLowerCase().includes(kw) || (r.teacherName || '').toLowerCase().includes(kw) || (r.roomNumber || '').toLowerCase().includes(kw));
     }
 
     return list;
@@ -203,13 +171,8 @@ const stats = computed(() => ({
         acc[g.value] = allClasses.value.filter((c) => c.grade === g.value).length;
         return acc;
     }, {}),
-    totalStudents: allClasses.value.reduce(
-        (sum, c) => sum + (c.studentCurrent || 0),
-        0
-    ),
-    withTeacher: allClasses.value.filter(
-        (c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên'
-    ).length
+    totalStudents: allClasses.value.reduce((sum, c) => sum + (c.studentCurrent || 0), 0),
+    withTeacher: allClasses.value.filter((c) => c.teacherName && c.teacherName !== 'Chưa có giáo viên').length
 }));
 
 /* =================== LOAD =================== */
@@ -233,9 +196,7 @@ async function loadAllClasses() {
 async function load() {
     loading.value = true;
     try {
-        const sort = sortField.value
-            ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}`
-            : undefined;
+        const sort = sortField.value ? `${sortField.value},${sortOrder.value === -1 ? 'desc' : 'asc'}` : undefined;
 
         const { items, total } = await fetchClasses({
             year: selectedYear.value?.value || undefined,
@@ -377,10 +338,7 @@ async function saveUpdateCount() {
 }
 
 async function onDelete(row) {
-    const { isConfirmed } = await confirmDialog(
-        'Xóa lớp học?',
-        `Bạn có chắc muốn xóa lớp "${row.className}"? Hành động này không thể hoàn tác.`
-    );
+    const { isConfirmed } = await confirmDialog('Xóa lớp học?', `Bạn có chắc muốn xóa lớp "${row.className}"? Hành động này không thể hoàn tác.`);
     if (!isConfirmed) return;
 
     try {
@@ -403,11 +361,13 @@ async function onExport() {
 
 /* =================== UTILS =================== */
 function getGradeStyle(grade) {
-    return gradeColors[grade] || {
-        bg: 'bg-gray-50',
-        text: 'text-gray-600',
-        border: 'border-gray-200'
-    };
+    return (
+        gradeColors[grade] || {
+            bg: 'bg-gray-50',
+            text: 'text-gray-600',
+            border: 'border-gray-200'
+        }
+    );
 }
 
 function getCapacityPercent(current, capacity) {
@@ -486,12 +446,7 @@ onMounted(async () => {
                     <span class="stat-label">Lớp có GVCN</span>
                 </div>
             </div>
-            <div
-                v-for="g in gradeOptions"
-                :key="g.value"
-                class="stat-card stat-grade"
-                :class="`stat-${g.color}`"
-            >
+            <div v-for="g in gradeOptions" :key="g.value" class="stat-card stat-grade" :class="`stat-${g.color}`">
                 <div class="stat-icon">
                     <i :class="['fa-solid', g.icon]"></i>
                 </div>
@@ -506,34 +461,17 @@ onMounted(async () => {
         <div class="filter-bar">
             <div class="filter-item">
                 <label>Năm học</label>
-                <Dropdown
-                    v-model="selectedYear"
-                    :options="years"
-                    optionLabel="label"
-                    placeholder="Chọn năm học"
-                    class="w-full"
-                />
+                <Dropdown v-model="selectedYear" :options="years" optionLabel="label" placeholder="Chọn năm học" class="w-full" />
             </div>
             <div class="filter-item">
                 <label>Khối lớp</label>
-                <Dropdown
-                    v-model="gradeFilter"
-                    :options="[{ label: 'Tất cả khối', value: '' }, ...gradeOptions]"
-                    optionLabel="label"
-                    optionValue="value"
-                    placeholder="Chọn khối"
-                    class="w-full"
-                />
+                <Dropdown v-model="gradeFilter" :options="[{ label: 'Tất cả khối', value: '' }, ...gradeOptions]" optionLabel="label" optionValue="value" placeholder="Chọn khối" class="w-full" />
             </div>
             <div class="filter-item filter-search">
                 <label>Tìm kiếm</label>
                 <div class="search-box">
                     <i class="fa-solid fa-search"></i>
-                    <InputText
-                        v-model="keyword"
-                        placeholder="Tên lớp, giáo viên, phòng..."
-                        class="w-full"
-                    />
+                    <InputText v-model="keyword" placeholder="Tên lớp, giáo viên, phòng..." class="w-full" />
                 </div>
             </div>
         </div>
@@ -571,13 +509,7 @@ onMounted(async () => {
                             </div>
                         </td>
                         <td>
-                            <span
-                                class="grade-badge"
-                                :class="[
-                                    getGradeStyle(row.grade).bg,
-                                    getGradeStyle(row.grade).text
-                                ]"
-                            >
+                            <span class="grade-badge" :class="[getGradeStyle(row.grade).bg, getGradeStyle(row.grade).text]">
                                 {{ row.grade || '—' }}
                             </span>
                         </td>
@@ -589,10 +521,7 @@ onMounted(async () => {
                         </td>
                         <td>{{ row.academicYear || '—' }}</td>
                         <td>
-                            <div
-                                v-if="row.teacherName && row.teacherName !== 'Chưa có giáo viên'"
-                                class="teacher-cell"
-                            >
+                            <div v-if="row.teacherName && row.teacherName !== 'Chưa có giáo viên'" class="teacher-cell">
                                 <div class="teacher-avatar">
                                     {{ row.teacherName.charAt(0) }}
                                 </div>
@@ -606,38 +535,16 @@ onMounted(async () => {
                                     <div
                                         class="capacity-fill"
                                         :style="{
-                                            width:
-                                                getCapacityPercent(
-                                                    row.studentCurrent,
-                                                    row.studentCapacity || DEFAULT_CAPACITY
-                                                ) + '%'
+                                            width: getCapacityPercent(row.studentCurrent, row.studentCapacity || DEFAULT_CAPACITY) + '%'
                                         }"
                                         :class="{
-                                            'fill-low':
-                                                getCapacityPercent(
-                                                    row.studentCurrent,
-                                                    row.studentCapacity || DEFAULT_CAPACITY
-                                                ) < 50,
-                                            'fill-medium':
-                                                getCapacityPercent(
-                                                    row.studentCurrent,
-                                                    row.studentCapacity || DEFAULT_CAPACITY
-                                                ) >= 50 &&
-                                                getCapacityPercent(
-                                                    row.studentCurrent,
-                                                    row.studentCapacity || DEFAULT_CAPACITY
-                                                ) < 80,
-                                            'fill-high':
-                                                getCapacityPercent(
-                                                    row.studentCurrent,
-                                                    row.studentCapacity || DEFAULT_CAPACITY
-                                                ) >= 80
+                                            'fill-low': getCapacityPercent(row.studentCurrent, row.studentCapacity || DEFAULT_CAPACITY) < 50,
+                                            'fill-medium': getCapacityPercent(row.studentCurrent, row.studentCapacity || DEFAULT_CAPACITY) >= 50 && getCapacityPercent(row.studentCurrent, row.studentCapacity || DEFAULT_CAPACITY) < 80,
+                                            'fill-high': getCapacityPercent(row.studentCurrent, row.studentCapacity || DEFAULT_CAPACITY) >= 80
                                         }"
                                     ></div>
                                 </div>
-                                <span class="capacity-text">
-                                    {{ row.studentCurrent || 0 }}/{{ row.studentCapacity || DEFAULT_CAPACITY }}
-                                </span>
+                                <span class="capacity-text"> {{ row.studentCurrent || 0 }}/{{ row.studentCapacity || DEFAULT_CAPACITY }} </span>
                             </div>
                         </td>
                         <td>
@@ -648,32 +555,16 @@ onMounted(async () => {
                         </td>
                         <td>
                             <div class="action-buttons">
-                                <button
-                                    class="action-btn"
-                                    @click="openView(row)"
-                                    title="Xem chi tiết"
-                                >
+                                <button class="action-btn" @click="openView(row)" title="Xem chi tiết">
                                     <i class="fa-solid fa-eye"></i>
                                 </button>
-                                <button
-                                    class="action-btn"
-                                    @click="openEdit(row)"
-                                    title="Chỉnh sửa"
-                                >
+                                <button class="action-btn" @click="openEdit(row)" title="Chỉnh sửa">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
-                                <button
-                                    class="action-btn"
-                                    @click="openUpdateCount(row)"
-                                    title="Cập nhật sĩ số"
-                                >
+                                <button class="action-btn" @click="openUpdateCount(row)" title="Cập nhật sĩ số">
                                     <i class="fa-solid fa-users"></i>
                                 </button>
-                                <button
-                                    class="action-btn danger"
-                                    @click="onDelete(row)"
-                                    title="Xóa"
-                                >
+                                <button class="action-btn danger" @click="onDelete(row)" title="Xóa">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
@@ -700,13 +591,7 @@ onMounted(async () => {
                 {{ totalRecords }}
                 lớp
             </span>
-            <Paginator
-                :rows="size"
-                :totalRecords="totalRecords"
-                :first="(page - 1) * size"
-                @page="onPageChange"
-                :rowsPerPageOptions="[10, 20, 50]"
-            />
+            <Paginator :rows="size" :totalRecords="totalRecords" :first="(page - 1) * size" @page="onPageChange" :rowsPerPageOptions="[10, 20, 50]" />
         </div>
 
         <!-- Dialog: Create -->
@@ -739,55 +624,25 @@ onMounted(async () => {
                     </div>
                     <div class="form-field">
                         <label>Tên lớp <span class="required">*</span></label>
-                        <Dropdown
-                            v-model="createForm.className"
-                            :options="availableClassNames"
-                            optionLabel="label"
-                            optionValue="value"
-                            :disabled="!createForm.grade"
-                            placeholder="Chọn tên lớp"
-                            class="w-full"
-                        />
+                        <Dropdown v-model="createForm.className" :options="availableClassNames" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn tên lớp" class="w-full" />
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-field">
                         <label>Phòng học <span class="required">*</span></label>
-                        <Dropdown
-                            v-model="createForm.roomNumber"
-                            :options="availableRooms"
-                            optionLabel="label"
-                            optionValue="value"
-                            :disabled="!createForm.grade"
-                            placeholder="Chọn phòng"
-                            class="w-full"
-                        />
+                        <Dropdown v-model="createForm.roomNumber" :options="availableRooms" optionLabel="label" optionValue="value" :disabled="!createForm.grade" placeholder="Chọn phòng" class="w-full" />
                     </div>
                     <div class="form-field">
                         <label>Năm học</label>
-                        <InputText
-                            v-model="createForm.academicYear"
-                            placeholder="VD: 2024-2025"
-                            class="w-full"
-                        />
+                        <InputText v-model="createForm.academicYear" placeholder="VD: 2024-2025" class="w-full" />
                     </div>
                 </div>
 
                 <div class="form-field">
                     <label>Giáo viên chủ nhiệm</label>
-                    <Dropdown
-                        v-model="createForm.teacherId"
-                        :options="availableTeachersForCreate"
-                        optionLabel="label"
-                        optionValue="value"
-                        showClear
-                        placeholder="Chọn giáo viên (không bắt buộc)"
-                        class="w-full"
-                    />
-                    <span class="field-hint">
-                        Mỗi giáo viên chỉ có thể làm GVCN của 1 lớp
-                    </span>
+                    <Dropdown v-model="createForm.teacherId" :options="availableTeachersForCreate" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên (không bắt buộc)" class="w-full" />
+                    <span class="field-hint"> Mỗi giáo viên chỉ có thể làm GVCN của 1 lớp </span>
                 </div>
             </div>
 
@@ -837,15 +692,7 @@ onMounted(async () => {
 
                 <div class="form-field">
                     <label>Giáo viên chủ nhiệm</label>
-                    <Dropdown
-                        v-model="editForm.teacherId"
-                        :options="availableTeachersForEdit"
-                        optionLabel="label"
-                        optionValue="value"
-                        showClear
-                        placeholder="Chọn giáo viên"
-                        class="w-full"
-                    />
+                    <Dropdown v-model="editForm.teacherId" :options="availableTeachersForEdit" optionLabel="label" optionValue="value" showClear placeholder="Chọn giáo viên" class="w-full" />
                 </div>
             </div>
 
@@ -898,9 +745,7 @@ onMounted(async () => {
                     </div>
                     <div class="view-item">
                         <span class="view-label">Sĩ số</span>
-                        <span class="view-value">
-                            {{ viewData.studentCurrent || 0 }}/{{ viewData.studentCapacity || DEFAULT_CAPACITY }}
-                        </span>
+                        <span class="view-value"> {{ viewData.studentCurrent || 0 }}/{{ viewData.studentCapacity || DEFAULT_CAPACITY }} </span>
                     </div>
                     <div class="view-item full">
                         <span class="view-label">Giáo viên chủ nhiệm</span>
@@ -913,12 +758,7 @@ onMounted(async () => {
         </Dialog>
 
         <!-- Dialog: Update Student Count -->
-        <Dialog
-            v-model:visible="showUpdateCount"
-            modal
-            :style="{ width: '400px' }"
-            :draggable="false"
-        >
+        <Dialog v-model:visible="showUpdateCount" modal :style="{ width: '400px' }" :draggable="false">
             <template #header>
                 <div class="dialog-header">
                     <i class="fa-solid fa-users"></i>
@@ -1520,5 +1360,76 @@ onMounted(async () => {
     display: flex;
     gap: 0.5rem;
     font-size: 0.875rem;
+}
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .header-actions .btn {
+    flex: 1;
+    min-width: 140px;
+    justify-content: center;
+  }
+}
+
+/* 2) Stats: giảm min width để không bị tràn */
+@media (max-width: 640px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 3) Filter bar: 3 cột -> 1 cột */
+@media (max-width: 900px) {
+  .filter-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 4) Table: cho phép scroll ngang */
+.table-container {
+  overflow-x: auto; /* ✅ quan trọng để responsive */
+}
+
+.data-table {
+  min-width: 980px; /* ✅ giữ cột không bị ép quá nhỏ; bạn có thể tăng/giảm */
+}
+
+/* 5) Dialog form: 2 cột -> 1 cột */
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* view grid cũng 1 cột */
+  .view-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .view-item.full {
+    grid-column: auto;
+  }
+
+  /* nút dialog: xuống hàng đẹp hơn */
+  .dialog-footer {
+    flex-direction: column;
+  }
+  .dialog-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* action buttons trong table: tránh quá dài */
+  .action-buttons {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
 }
 </style>

@@ -1400,4 +1400,100 @@ onMounted(() => load(true));
     margin: 0;
     line-height: 1.5;
 }
+/* =================== RESPONSIVE PATCH: PARENT PAGE =================== */
+
+/* Header actions xuống dòng + button co giãn */
+@media (max-width: 768px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .header-actions .btn {
+    flex: 1 1 auto;
+    min-width: 150px;
+    justify-content: center;
+  }
+}
+
+/* Stats cards: 2 card / hàng trên mobile */
+@media (max-width: 640px) {
+  .stats-row {
+    gap: 0.5rem;
+  }
+
+  .stat-card {
+    min-width: 0;
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+}
+
+/* Filter bar: chuyển thành cột */
+@media (max-width: 900px) {
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-left {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .search-box {
+    max-width: none; /* full width */
+  }
+
+  .filter-right {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .filter-right .btn {
+    flex: 1;
+    min-width: 140px;
+    justify-content: center;
+  }
+}
+
+/* Table: enable horizontal scroll để không vỡ layout */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-table {
+  min-width: 980px; /* bảng parent có nhiều cột */
+}
+
+/* Action buttons: wrap nếu quá chật */
+@media (max-width: 640px) {
+  .action-buttons {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .pagination-wrapper {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dialog-footer {
+    flex-direction: column;
+  }
+
+  .dialog-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .drop-zone {
+    padding: 1.25rem;
+  }
+}
 </style>

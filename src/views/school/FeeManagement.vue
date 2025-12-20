@@ -2189,4 +2189,105 @@ onMounted(init);
     border-color: #10b981;
     box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15);
 }
+/* =================== RESPONSIVE PATCH: FEE PAGE =================== */
+
+/* Header actions: wrap đẹp và button co giãn */
+@media (max-width: 768px) {
+  .fee-page {
+    padding: 1rem;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .header-actions .btn {
+    flex: 1 1 auto;
+    min-width: 140px;
+    justify-content: center;
+  }
+}
+
+/* Filter bar: chuyển sang layout 1 cột + input full width */
+@media (max-width: 900px) {
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-group,
+  .filter-dropdown {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .filter-search {
+    min-width: 0;
+  }
+}
+
+/* Summary stats: nếu bị chật thì cho wrap */
+@media (max-width: 640px) {
+  .summary-stats {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .stat-divider {
+    display: none;
+  }
+
+  .stat-item {
+    flex: 1 1 calc(50% - 0.75rem);
+  }
+}
+
+/* Table: bật scroll ngang để không vỡ layout */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-table {
+  min-width: 1100px; /* bảng có nhiều cột + actions */
+}
+
+/* Actions: trên mobile ẩn chữ của nút Thu tiền để gọn */
+@media (max-width: 768px) {
+  .action-pay span {
+    display: none;
+  }
+}
+
+/* Pagination: xếp dọc */
+@media (max-width: 640px) {
+  .pagination-section {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Dialog footer: buttons full width trên mobile */
+@media (max-width: 640px) {
+  .dialog-footer {
+    flex-direction: column;
+  }
+
+  .dialog-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .form-row {
+    flex-direction: column;
+  }
+}
+
+/* Notify list row: chống tràn tên học sinh */
+.row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>
